@@ -1,5 +1,4 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -32,13 +31,11 @@ namespace bosshealthhud
     public class BossHealthHUDManager : MonoBehaviour
     {
         private Camera _mainCamera;
-
         private CharacterMainControl _player;
-        private CharacterMainControl _boss;
 
-        private float _currentHpValue;
-        private float _maxHpValue;
-        private float _smoothDisplayRatio = 1f;
+        // 여러 보스를 동시에 표시하기 위한 리스트
+        private readonly List<CharacterMainControl> _bossList = new List<CharacterMainControl>();
+        private const int MaxBossBars = 3; // 동시에 최대 몇 줄까지 표시할지
 
         private float _nextScanTime;
         private float _scanInterval = 0.5f;   // 0.5초마다 보스 후보 재탐색
@@ -187,14 +184,12 @@ namespace bosshealthhud
                 TryFindPlayer();
             }
 
-            // 주기적으로 보스 대상 찾기 (또는 보스가 죽었을 때 / 멀어졌을 때)
+            // 주기적으로 보스 대상 다시 스캔 (죽었거나 멀어졌거나, 새 보스 등장 등)
             if (Time.time >= _nextScanTime)
             {
                 _nextScanTime = Time.time + _scanInterval;
-                UpdateBossTarget();
+                ScanBosses();
             }
-
-            UpdateHpValues();
         }
 
         private void TryFindMainCamera()
@@ -225,13 +220,11 @@ namespace bosshealthhud
             }
         }
 
-        private void UpdateBossTarget()
+        private void ScanBosses()
         {
             try
             {
-                _boss = null;
-                _currentHpValue = 0f;
-                _maxHpValue = 0f;
+                _bossList.Clear();
 
                 CharacterMainControl[] allChars = UnityEngine.Object.FindObjectsOfType<CharacterMainControl>();
                 if (allChars == null || allChars.Length == 0)
@@ -239,8 +232,7 @@ namespace bosshealthhud
                     return;
                 }
 
-                CharacterMainControl best = null;
-                float bestMaxHp = 0f;
+                List<CharacterMainControl> candidates = new List<CharacterMainControl>();
 
                 for (int i = 0; i < allChars.Length; i++)
                 {
@@ -293,66 +285,37 @@ namespace bosshealthhud
                         }
                     }
 
-                    // MaxHP 가장 높은 보스를 선택
-                    if (maxHp > bestMaxHp)
-                    {
-                        bestMaxHp = maxHp;
-                        best = ch;
-                    }
+                    candidates.Add(ch);
                 }
 
-                if (best != null)
+                if (candidates.Count == 0)
                 {
-                    _boss = best;
-                    Debug.Log("[BossHealthHUD] 보스 후보 선택: " + SafeGetName(_boss) +
-                              " Cur=" + _boss.Health.CurrentHealth +
-                              " / Max=" + _boss.Health.MaxHealth);
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.Log("[BossHealthHUD] UpdateBossTarget 예외: " + ex);
-            }
-        }
-
-        private void UpdateHpValues()
-        {
-            if (_boss == null || !_boss)
-            {
-                _currentHpValue = 0f;
-                _maxHpValue = 0f;
-                return;
-            }
-
-            Health h = _boss.Health;
-            if (h == null)
-            {
-                _currentHpValue = 0f;
-                _maxHpValue = 0f;
-                return;
-            }
-
-            try
-            {
-                float hpCur = h.CurrentHealth;
-                float hpMax = h.MaxHealth;
-
-                if (hpMax <= 0f || hpCur <= 0f)
-                {
-                    _currentHpValue = 0f;
-                    _maxHpValue = 0f;
                     return;
                 }
 
-                _currentHpValue = hpCur;
-                _maxHpValue = hpMax;
+                // MaxHP 기준으로 내림차순 정렬 후, 상위 N개만 선택
+                candidates.Sort((a, b) =>
+                {
+                    Health ha = a != null ? a.Health : null;
+                    Health hb = b != null ? b.Health : null;
+                    float ma = (ha != null) ? ha.MaxHealth : 0f;
+                    float mb = (hb != null) ? hb.MaxHealth : 0f;
+                    return mb.CompareTo(ma);
+                });
 
-                float targetRatio = Mathf.Clamp01(_currentHpValue / _maxHpValue);
-                _smoothDisplayRatio = Mathf.Lerp(_smoothDisplayRatio, targetRatio, Time.deltaTime * 8f);
+                for (int i = 0; i < candidates.Count && i < MaxBossBars; i++)
+                {
+                    _bossList.Add(candidates[i]);
+                }
+
+                if (_bossList.Count > 0)
+                {
+                    Debug.Log("[BossHealthHUD] 보스 수: " + _bossList.Count);
+                }
             }
             catch (Exception ex)
             {
-                Debug.Log("[BossHealthHUD] HP 값 읽기 예외: " + ex);
+                Debug.Log("[BossHealthHUD] ScanBosses 예외: " + ex);
             }
         }
 
@@ -363,24 +326,14 @@ namespace bosshealthhud
                 return;
             }
 
-            if (_boss == null || !_boss)
+            if (_bossList == null || _bossList.Count == 0)
             {
                 return;
             }
 
-            if (_currentHpValue <= 0f || _maxHpValue <= 0f)
+            if (_player == null || !_player)
             {
                 return;
-            }
-
-            // 플레이어와 멀어지면 HP바 숨기기
-            if (_player != null && _player)
-            {
-                float dist = Vector3.Distance(_player.transform.position, _boss.transform.position);
-                if (dist > _maxBossDisplayDistance)
-                {
-                    return;
-                }
             }
 
             if (_nameStyle == null)
@@ -405,37 +358,73 @@ namespace bosshealthhud
 
             float bottomMargin = 230f;
 
-            float x = (Screen.width - barWidth) * 0.5f;
-            float y = Screen.height - bottomMargin - barHeight;
+            float baseX = (Screen.width - barWidth) * 0.5f;
+            float baseY = Screen.height - bottomMargin - barHeight;
 
-            float ratio = Mathf.Clamp01(_smoothDisplayRatio);
+            float verticalSpacing = barHeight + 40f; // 줄 간 간격
+
             Color oldColor = GUI.color;
 
-            if (_hpTex == null)
+            int drawnCount = 0;
+
+            for (int i = 0; i < _bossList.Count && drawnCount < MaxBossBars; i++)
             {
-                _hpTex = new Texture2D(1, 1);
-                _hpTex.SetPixel(0, 0, Color.white);
-                _hpTex.Apply();
+                CharacterMainControl boss = _bossList[i];
+                if (boss == null || !boss)
+                {
+                    continue;
+                }
+
+                Health h = boss.Health;
+                if (h == null)
+                {
+                    continue;
+                }
+
+                float curHp = h.CurrentHealth;
+                float maxHp = h.MaxHealth;
+
+                if (maxHp <= 0f || curHp <= 0f)
+                {
+                    continue;
+                }
+
+                // 거리 체크: 멀어지면 해당 보스만 스킵 (다른 보스는 그릴 수 있음)
+                float dist = Vector3.Distance(_player.transform.position, boss.transform.position);
+                if (dist > _maxBossDisplayDistance)
+                {
+                    continue;
+                }
+
+                float ratio = Mathf.Clamp01(curHp / maxHp);
+
+                float x = baseX;
+                float y = baseY - drawnCount * verticalSpacing;
+
+                // ░ 테두리 (거의 검정에 가까운 어두운 빨강)
+                GUI.color = new Color(0.15f, 0f, 0f, 0.8f);
+                GUI.DrawTexture(new Rect(x, y, barWidth, barHeight), _hpTex);
+
+                // █ 실제 HP (밝은 빨강)
+                GUI.color = new Color(0.9f, 0.1f, 0.1f, 0.95f);
+                GUI.DrawTexture(
+                    new Rect(x + 2f, y + 2f, (barWidth - 4f) * ratio, barHeight - 4f),
+                    _hpTex
+                );
+
+                // 이름 + HP 숫자
+                GUI.color = Color.white;
+
+                string bossName = SafeGetName(boss);
+                GUI.Label(new Rect(x, y - 34f, barWidth, 32f), bossName, _nameStyle);
+
+                string hpText = string.Format("{0} / {1}",
+                    Mathf.CeilToInt(curHp),
+                    Mathf.CeilToInt(maxHp));
+                GUI.Label(new Rect(x, y + 1f, barWidth, barHeight - 2f), hpText, _hpTextStyle);
+
+                drawnCount++;
             }
-
-            // ░ 테두리 (거의 검정에 가까운 어두운 빨강)
-            GUI.color = new Color(0.15f, 0f, 0f, 0.8f);
-            GUI.DrawTexture(new Rect(x, y, barWidth, barHeight), _hpTex);
-
-            // █ 실제 HP (밝은 빨강)
-            GUI.color = new Color(0.9f, 0.1f, 0.1f, 0.95f);
-            GUI.DrawTexture(new Rect(x + 2f, y + 2f, (barWidth - 4f) * ratio, barHeight - 4f), _hpTex);
-
-            // 이름 + HP 숫자
-            GUI.color = Color.white;
-
-            string bossName = SafeGetName(_boss);
-            GUI.Label(new Rect(x, y - 30f, barWidth, 26f), bossName, _nameStyle);
-
-            string hpText = string.Format("{0} / {1}",
-                Mathf.CeilToInt(_currentHpValue),
-                Mathf.CeilToInt(_maxHpValue));
-            GUI.Label(new Rect(x, y + 2f, barWidth, barHeight - 4f), hpText, _hpTextStyle);
 
             GUI.color = oldColor;
         }
