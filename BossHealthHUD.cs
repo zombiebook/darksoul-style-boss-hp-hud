@@ -107,6 +107,7 @@ namespace bosshealthhud
 			"Pala Pala",
 			"Pulu Pulu",
 			"Koko Koko",
+			"Roadblock",
 			"チビガモ",
 			"光の男",
 			"ロードン",
