@@ -56,7 +56,7 @@ namespace bosshealthhud
         // HP 바용 흰 텍스처
         private Texture2D _hpTex;
 
-        // 보스 HUD를 띄울 이름들 (화이트리스트)
+        // 보스 HUD를 띄울 이름들 (화이트리스트: 한·영·일)
         private static readonly string[] _bossNameExact =
         {
             "로든",
@@ -67,72 +67,71 @@ namespace bosshealthhud
             "폭주 기계 거미",
             "???",
             "꼬마덕",
-			"비다",
-			"쓰리샷 형님",
-			"폭탄광",
-			"바리케이드",
-			"미셀",
-			"고급 엔지니어",
-			"샷건",
-			"푸룽푸룽",
-			"구루구루",
-			"팔라팔라",
-			"빌리빌리",
-			"코코코코",
-			"흥이",
-			"교도관",
-			"폭풍?",
-			"일진",
-			"급속 단장",
-			"방랑자",
-			"라이트맨",
-			"Pato Chapo",
-			"Man of Light",
-			"Speedy Group Commander",
-			"Lordon",
-			"Vida",
-			"Big Xing",
-			"Rampaging Arcade",
-			"Senior Engineer",
-			"Triple-Shot Man",
-			"Misel",
-			"Mine Manager",
-			"Shotgunner",
-			"Mad Bomber",
-			"Security Captain",
-			"Fly Captain",
-			"School Bully",
-			"Billy Billy",
-			"Gulu Gulu",
-			"Pala Pala",
-			"Pulu Pulu",
-			"Koko Koko",
-			"Roadblock",
-			"チビガモ",
-			"光の男",
-			"ロードン",
-			"スピード団団長",
-			"ハエ隊長",
-			"暴走アーケード",
-			"ヴィーダ",
-			"いじめっ子",
-			"施設長",
-			"マルセル",
-			"上級エンジニア",
-			"トリプルS親分",
-			"ショットガンナー",
-			"BA隊長",
-			"ロードブロック",
-			"グルグル",
-			"パラパラ",
-			"ビッグシン",
-			"ビリビリ",
-			"プロプロ",
-			"ロロロロ",
-			"爆弾マニア",
-			"看守長"
-			
-			
+            "비다",
+            "쓰리샷 형님",
+            "폭탄광",
+            "바리케이드",
+            "미셀",
+            "고급 엔지니어",
+            "샷건",
+            "푸룽푸룽",
+            "구루구루",
+            "팔라팔라",
+            "빌리빌리",
+            "코코코코",
+            "흥이",
+            "교도관",
+            "폭풍?",
+            "일진",
+            "급속 단장",
+            "방랑자",
+            "라이트맨",
+            "Pato Chapo",
+            "Man of Light",
+            "Speedy Group Commander",
+            "Lordon",
+            "Vida",
+            "Big Xing",
+            "Rampaging Arcade",
+            "Senior Engineer",
+            "Triple-Shot Man",
+            "Misel",
+            "Mine Manager",
+            "Shotgunner",
+            "Mad Bomber",
+            "Security Captain",
+            "Fly Captain",
+            "School Bully",
+            "Billy Billy",
+            "Gulu Gulu",
+            "Pala Pala",
+            "Pulu Pulu",
+            "Koko Koko",
+            "Roadblock",
+            "チビガモ",
+            "光の男",
+            "ロードン",
+            "スピード団団長",
+            "ハエ隊長",
+            "暴走アーケード",
+            "ヴィーダ",
+            "いじめっ子",
+            "施設長",
+            "マルセル",
+            "上級エンジニア",
+            "トリプルS親分",
+            "ショットガンナー",
+            "BA隊長",
+            "ロードブロック",
+            "グルグル",
+            "パラパラ",
+            "ビッグシン",
+            "ビリビリ",
+            "プロプロ",
+            "ロロロロ",
+            "爆弾マニア",
+            "看守長",
+            "レイダー"
         };
 
         // 이름 안에 이런 키워드가 들어가면 보스로 취급 (대장급 등)
@@ -151,7 +150,6 @@ namespace bosshealthhud
             "일반 BA",
             "파리 대원",
             "늑대",
-            "일진",
             "부처 형"
         };
 
@@ -189,7 +187,7 @@ namespace bosshealthhud
                 TryFindPlayer();
             }
 
-            // 주기적으로 보스 대상 찾기 (또는 보스가 죽었을 때 재탐색)
+            // 주기적으로 보스 대상 찾기 (또는 보스가 죽었을 때 / 멀어졌을 때)
             if (Time.time >= _nextScanTime)
             {
                 _nextScanTime = Time.time + _scanInterval;
@@ -231,23 +229,6 @@ namespace bosshealthhud
         {
             try
             {
-                // 지금 보스가 살아있고 너무 멀지 않으면 그대로 유지
-                if (_boss != null && _boss && _boss.Health != null)
-                {
-                    Health bh = _boss.Health;
-                    if (bh.CurrentHealth > 0f && bh.MaxHealth > 0f)
-                    {
-                        if (_player != null && _player)
-                        {
-                            float dist = Vector3.Distance(_player.transform.position, _boss.transform.position);
-                            if (dist <= _maxBossDisplayDistance)
-                            {
-                                return; // 기존 보스 계속 유지
-                            }
-                        }
-                    }
-                }
-
                 _boss = null;
                 _currentHpValue = 0f;
                 _maxHpValue = 0f;
@@ -290,6 +271,7 @@ namespace bosshealthhud
                     float maxHp = h.MaxHealth;
                     float curHp = h.CurrentHealth;
 
+                    // 죽은 보스는 제외
                     if (curHp <= 0f)
                     {
                         continue;
@@ -301,6 +283,7 @@ namespace bosshealthhud
                         continue;
                     }
 
+                    // 플레이어와 거리 제한
                     if (_player != null && _player)
                     {
                         float dist = Vector3.Distance(_player.transform.position, ch.transform.position);
@@ -310,6 +293,7 @@ namespace bosshealthhud
                         }
                     }
 
+                    // MaxHP 가장 높은 보스를 선택
                     if (maxHp > bestMaxHp)
                     {
                         bestMaxHp = maxHp;
@@ -389,6 +373,16 @@ namespace bosshealthhud
                 return;
             }
 
+            // 플레이어와 멀어지면 HP바 숨기기
+            if (_player != null && _player)
+            {
+                float dist = Vector3.Distance(_player.transform.position, _boss.transform.position);
+                if (dist > _maxBossDisplayDistance)
+                {
+                    return;
+                }
+            }
+
             if (_nameStyle == null)
             {
                 _nameStyle = new GUIStyle(GUI.skin.label);
@@ -453,28 +447,34 @@ namespace bosshealthhud
                 return false;
             }
 
-            // 제외 리스트에 있으면 무조건 false
+            // 전부 소문자로 통일해서 비교
+            string lower = name.ToLowerInvariant();
+
+            // 1) 제외 리스트 먼저 (잡몹/부처 형 등)
             for (int i = 0; i < _excludeBossNames.Length; i++)
             {
-                if (name.Contains(_excludeBossNames[i]))
+                string ex = _excludeBossNames[i];
+                if (!string.IsNullOrEmpty(ex) && lower.Contains(ex.ToLowerInvariant()))
                 {
                     return false;
                 }
             }
 
-            // 정확히 일치하는 이름
+            // 2) 정확히 일치하는 이름 (한·영·일 보스들)
             for (int i = 0; i < _bossNameExact.Length; i++)
             {
-                if (name == _bossNameExact[i])
+                string exact = _bossNameExact[i];
+                if (!string.IsNullOrEmpty(exact) && lower == exact.ToLowerInvariant())
                 {
                     return true;
                 }
             }
 
-            // 키워드가 들어간 이름 (대장, 장, 보스 등)
+            // 3) 키워드 포함 (대장, 장, 보스 등)
             for (int i = 0; i < _bossNameKeywords.Length; i++)
             {
-                if (name.Contains(_bossNameKeywords[i]))
+                string kw = _bossNameKeywords[i];
+                if (!string.IsNullOrEmpty(kw) && lower.Contains(kw.ToLowerInvariant()))
                 {
                     return true;
                 }
