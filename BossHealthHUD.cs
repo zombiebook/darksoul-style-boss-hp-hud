@@ -3,8 +3,10 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.IO;
 using ItemStatsSystem;
 using UnityEngine;
+using Duckov;    // AudioManager, CharacterMainControl, Health
 
 namespace bosshealthhud
 {
@@ -31,18 +33,15 @@ namespace bosshealthhud
 
     public class BossHealthHUDManager : MonoBehaviour
     {
+        // ───── 기본 ─────
         private Camera _mainCamera;
         private CharacterMainControl _player;
 
         // 여러 보스를 동시에 표시하기 위한 리스트
-        private readonly List<CharacterMainControl> _bossList = new List<CharacterMainControl>();
-        private const int MaxBossBars = 3; // 동시에 최대 몇 줄까지 표시할지
+        private readonly List<CharacterMainControl> _bossList =
+            new List<CharacterMainControl>();
 
-        private float _nextScanTime;
-        private float _scanInterval = 0.5f;   // 0.5초마다 보스 후보 재탐색
-
-        private GUIStyle _nameStyle;
-        private GUIStyle _hpTextStyle;
+        // HUD On/Off
         private bool _uiEnabled = true;       // F8 토글
 
         // 꼬마덕 HP가 128이라, 그보다 살짝 여유 있게 120 이상을 보스로 취급
@@ -53,6 +52,10 @@ namespace bosshealthhud
 
         // HP 바용 흰 텍스처
         private Texture2D _hpTex;
+
+        // HP/이름 텍스트 스타일
+        private GUIStyle _nameStyle;
+        private GUIStyle _hpTextStyle;
 
         // ───── DUCK HUNTED 오버레이 관련 ─────
         private bool _showDuckHunted;
@@ -75,7 +78,7 @@ namespace bosshealthhud
             "광산장",
             "BA 대장",
             "파리 대장",
-			"축구 주장",
+            "축구 주장",
             "폭주 아케이드",
             "폭주 기계 거미",
             "???",
@@ -147,73 +150,63 @@ namespace bosshealthhud
             "レイダー"
         };
 
-        // 이름 안에 이런 키워드가 들어가면 보스로 취급 (대장급 등)
+        // 이름에 포함되면 보스로 판단할 키워드들 (지금은 화이트리스트만 사용)
         private static readonly string[] _bossNameKeywords =
         {
-            "보스"
-        };
 
-        // 보스바에서 무조건 제외할 이름들 (잡몹/자주 나오는 애들)
-        private static readonly string[] _excludeBossNames =
-        {
-            "넝마꾼",
-            "용병",
-            "일반 BA",
-            "파리 대원",
-            "늑대",
-            "부처 형"
         };
 
         private void Awake()
         {
             Debug.Log("[BossHealthHUD] Manager Awake");
-
-            // 1x1 흰 텍스처 생성 (HP바 그릴 때 색 입혀서 사용)
-            _hpTex = new Texture2D(1, 1);
-            _hpTex.SetPixel(0, 0, Color.white);
-            _hpTex.Apply();
+            TryFindMainCamera();
+            TryFindPlayer();
         }
 
         private void Update()
         {
-            // HUD 전체 ON/OFF
-            if (Input.GetKeyDown(KeyCode.F8))
-            {
-                _uiEnabled = !_uiEnabled;
-                Debug.Log("[BossHealthHUD] HUD " + (_uiEnabled ? "ON" : "OFF"));
-            }
+                // F8로 HUD ON/OFF 토글
+    if (UnityEngine.Input.GetKeyDown(KeyCode.F8))
+    {
+        _uiEnabled = !_uiEnabled;
+        Debug.Log("[BossHealthHUD] HUD " + (_uiEnabled ? "ON" : "OFF"));
+    }
 
-            if (!_uiEnabled)
-            {
-                return;
-            }
+    if (!_uiEnabled)
+    {
+        return;
+    }
 
-            if (_mainCamera == null)
-            {
-                TryFindMainCamera();
-            }
+    if (_mainCamera == null)
+    {
+        TryFindMainCamera();
+    }
 
-            if (_player == null || !_player)
-            {
-                TryFindPlayer();
-            }
+    if (_player == null)
+    {
+        TryFindPlayer();
+    }
 
-            // 주기적으로 보스 대상 다시 스캔 (죽었거나 멀어졌거나, 새 보스 등장 등)
-            if (Time.time >= _nextScanTime)
-            {
-                _nextScanTime = Time.time + _scanInterval;
-                ScanBosses();
-            }
+    // 🔥 1) 먼저, 지금 _bossList에 있는 애들 HP 변화를 매 프레임 체크
+    //    → 여기서 HP가 >0 → <=0 으로 바뀌면 무조건 TriggerDuckHunted 호출
+    UpdateBossDeathState();
 
-            UpdateBossDeathState();
+    // 🔁 2) 그리고 가끔씩(15프레임마다) 보스 목록을 갱신
+    //    → 이때 이미 죽은 보스는 리스트에서 정리됨
+    if (Time.frameCount % 15 == 0)
+    {
+        ScanBosses();
+    }
 
-            if (_showDuckHunted)
-            {
-                _duckHuntedTimer -= Time.deltaTime;
-                if (_duckHuntedTimer <= 0f)
-                {
-                    _showDuckHunted = false;
-                    _lastKilledBossName = null;
+    // ⏱ 3) DUCK HUNTED 페이드 타이머
+    if (_showDuckHunted)
+    {
+        _duckHuntedTimer -= Time.deltaTime;
+        if (_duckHuntedTimer <= 0f)
+        {
+            _duckHuntedTimer = 0f;
+            _showDuckHunted = false;
+            _lastKilledBossName = null;
                 }
             }
         }
@@ -331,12 +324,11 @@ namespace bosshealthhud
 
                 for (int i = 0; i < candidates.Count && i < MaxBossBars; i++)
                 {
-                    _bossList.Add(candidates[i]);
-                }
-
-                if (_bossList.Count > 0)
-                {
-                    //Debug.Log("[BossHealthHUD] 보스 수: " + _bossList.Count);
+                    CharacterMainControl boss = candidates[i];
+                    if (boss != null && !_bossList.Contains(boss))
+                    {
+                        _bossList.Add(boss);
+                    }
                 }
             }
             catch (Exception ex)
@@ -345,53 +337,67 @@ namespace bosshealthhud
             }
         }
 
-        // 보스 HP 변화 체크해서 죽었을 때 DUCK HUNTED 띄우기
+        // 동시에 표시할 수 있는 보스 바 최대 개수
+        private const int MaxBossBars = 3;
+
+        // 보스 HP 변화 감지해서 죽었을 때 DUCK HUNTED + 사운드 트리거
         private void UpdateBossDeathState()
         {
             if (_bossList == null || _bossList.Count == 0)
-            {
                 return;
-            }
 
-            for (int i = 0; i < _bossList.Count; i++)
+            try
             {
-                CharacterMainControl boss = _bossList[i];
-                if (boss == null || !boss)
+                _cleanupList.Clear();
+
+                foreach (CharacterMainControl boss in _bossList)
                 {
-                    continue;
+                    if (boss == null || !boss)
+                    {
+                        _cleanupList.Add(boss);
+                        continue;
+                    }
+
+                    Health h = boss.Health;
+                    if (h == null)
+                    {
+                        _cleanupList.Add(boss);
+                        continue;
+                    }
+
+                    float curHp = h.CurrentHealth;
+
+                    float prevHp;
+                    // 처음 보는 보스면 현재 HP를 저장만 해두고 넘어감
+                    if (!_lastHpMap.TryGetValue(boss, out prevHp))
+                    {
+                        _lastHpMap[boss] = curHp;
+                        continue;
+                    }
+
+                    // 이전에는 살아 있었는데(>0), 지금 0 이하 → 방금 죽은 것
+                    if (prevHp > 0f && curHp <= 0f)
+                    {
+                        string bossName = SafeGetName(boss);
+                        TriggerDuckHunted(bossName);   // 여기서 문구 + 소리 둘 다 실행
+                        _cleanupList.Add(boss);
+                    }
+
+                    // HP 갱신
+                    _lastHpMap[boss] = curHp;
                 }
 
-                Health h = boss.Health;
-                if (h == null)
+                // 죽었거나 null 된 보스 정리
+                for (int i = 0; i < _cleanupList.Count; i++)
                 {
-                    continue;
+                    CharacterMainControl dead = _cleanupList[i];
+                    _lastHpMap.Remove(dead);
+                    _bossList.Remove(dead);
                 }
-
-                float curHp = h.CurrentHealth;
-                float prevHp = 0f;
-                _lastHpMap.TryGetValue(boss, out prevHp);
-
-                if (prevHp > 0f && curHp <= 0f)
-                {
-                    TriggerDuckHunted(SafeGetName(boss));
-                }
-
-                _lastHpMap[boss] = curHp;
             }
-
-            // 사라진 보스들 정리
-            _cleanupList.Clear();
-            foreach (KeyValuePair<CharacterMainControl, float> kv in _lastHpMap)
+            catch (Exception ex)
             {
-                if (kv.Key == null || !_bossList.Contains(kv.Key))
-                {
-                    _cleanupList.Add(kv.Key);
-                }
-            }
-
-            for (int i = 0; i < _cleanupList.Count; i++)
-            {
-                _lastHpMap.Remove(_cleanupList[i]);
+                Debug.Log("[BossHealthHUD] UpdateBossDeathState 예외: " + ex);
             }
         }
 
@@ -400,7 +406,40 @@ namespace bosshealthhud
             _showDuckHunted = true;
             _duckHuntedTimer = DuckHuntedDuration;
             _lastKilledBossName = bossName;
+
             Debug.Log("[BossHealthHUD] DUCK HUNTED -> " + bossName);
+
+            TryPlayBossDefeatedSound();
+        }
+
+        private void TryPlayBossDefeatedSound()
+        {
+            try
+            {
+                string dllPath = Assembly.GetExecutingAssembly().Location;
+                string folder = Path.GetDirectoryName(dllPath);
+                if (string.IsNullOrEmpty(folder))
+                {
+                    Debug.Log("[BossHealthHUD] DLL 폴더 경로를 찾지 못했습니다.");
+                    return;
+                }
+
+                string audioDir = Path.Combine(folder, "Audio");
+                string filePath = Path.Combine(audioDir, "BossDefeated.mp3");
+
+                if (!System.IO.File.Exists(filePath))
+                {
+                    Debug.Log("[BossHealthHUD] BossDefeated.mp3 not found: " + filePath);
+                    return;
+                }
+
+                AudioManager.PostCustomSFX(filePath, null, false);
+                Debug.Log("[BossHealthHUD] BossDefeated sound played: " + filePath);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError("[BossHealthHUD] TryPlayBossDefeatedSound ERROR: " + ex);
+            }
         }
 
         private void OnGUI()
@@ -431,16 +470,23 @@ namespace bosshealthhud
                     _hpTextStyle.normal.textColor = Color.white;
                 }
 
-                float barWidth = Screen.width * 0.75f;
-                float barHeight = 32f;   // 조금 키워서 글씨 안 잘리게
+                float barWidth  = Screen.width * 0.75f;
+                float barHeight = 32f;   // 바 두께
 
-                float bottomMargin = 230f;
+                float bottomMargin = 230f;   // 전체 위치
 
                 float baseX = (Screen.width - barWidth) * 0.5f;
                 float baseY = Screen.height - bottomMargin - barHeight;
 
-                // 줄 사이 간격 (이름까지 고려해서 넉넉하게)
-                float verticalSpacing = barHeight + 40f;
+                // 바들 간 적당한 간격
+                float verticalSpacing = barHeight + 30f;
+
+                if (_hpTex == null)
+                {
+                    _hpTex = new Texture2D(1, 1, TextureFormat.RGBA32, false);
+                    _hpTex.SetPixel(0, 0, Color.white);
+                    _hpTex.Apply();
+                }
 
                 int drawnCount = 0;
 
@@ -458,15 +504,21 @@ namespace bosshealthhud
                         continue;
                     }
 
-                    float curHp = h.CurrentHealth;
                     float maxHp = h.MaxHealth;
+                    float curHp = h.CurrentHealth;
 
                     if (maxHp <= 0f || curHp <= 0f)
                     {
                         continue;
                     }
 
-                    // 거리 체크: 멀어지면 해당 보스만 스킵 (다른 보스는 그릴 수 있음)
+                    // 꼬마덕(128) 이상만 보스표시 (보정값 120)
+                    if (maxHp < _bossMinMaxHp)
+                    {
+                        continue;
+                    }
+
+                    // 거리 체크
                     float dist = Vector3.Distance(_player.transform.position, boss.transform.position);
                     if (dist > _maxBossDisplayDistance)
                     {
@@ -493,82 +545,89 @@ namespace bosshealthhud
                     GUI.color = Color.white;
 
                     string bossName = SafeGetName(boss);
-                    // 이름 라벨: 높이 넉넉, 살짝 위로
-                    GUI.Label(new Rect(x, y - 34f, barWidth, 32f), bossName, _nameStyle);
 
-                    string hpText = string.Format("{0} / {1}",
-                        Mathf.CeilToInt(curHp),
-                        Mathf.CeilToInt(maxHp));
-                    GUI.Label(new Rect(x, y + 1f, barWidth, barHeight - 2f), hpText, _hpTextStyle);
+                    // 이름은 바 바로 위
+                    Rect nameRect = new Rect(
+                        x,
+                        y - 29f,
+                        barWidth,
+                        30f
+                    );
+
+                    // HP 텍스트는 막대 안 중앙 (위/아래 여유 조금 더 줌)
+                    Rect hpRect = new Rect(
+                        x + 2f,
+                        y,
+                        barWidth - 4f,
+                        barHeight
+                    );
+
+                    GUI.Label(nameRect, bossName, _nameStyle);
+                    GUI.Label(
+                        hpRect,
+                        string.Format("{0:0}/{1:0}  ({2:P0})", curHp, maxHp, ratio),
+                        _hpTextStyle
+                    );
 
                     drawnCount++;
                 }
             }
 
             // ====== DUCK HUNTED 오버레이 ======
-            // ====== DUCK HUNTED 오버레이 ======
-if (_showDuckHunted && _duckHuntedTimer > 0f)
-{
-    if (_duckHuntedStyle == null)
-    {
-        _duckHuntedStyle = new GUIStyle(GUI.skin.label);
-        _duckHuntedStyle.alignment = TextAnchor.MiddleCenter;
-        _duckHuntedStyle.fontStyle = FontStyle.Bold;
-        _duckHuntedStyle.normal.textColor = Color.white;
-    }
+            if (_showDuckHunted && _duckHuntedTimer > 0f)
+            {
+                if (_duckHuntedStyle == null)
+                {
+                    _duckHuntedStyle = new GUIStyle(GUI.skin.label);
+                    _duckHuntedStyle.alignment = TextAnchor.MiddleCenter;
+                    _duckHuntedStyle.fontSize = 56;
+                    _duckHuntedStyle.fontStyle = FontStyle.Bold;
+                }
 
-    if (_duckHuntedSubStyle == null)
-    {
-        _duckHuntedSubStyle = new GUIStyle(GUI.skin.label);
-        _duckHuntedSubStyle.alignment = TextAnchor.MiddleCenter;
-        _duckHuntedSubStyle.normal.textColor = Color.white;
-    }
+                if (_duckHuntedSubStyle == null)
+                {
+                    _duckHuntedSubStyle = new GUIStyle(GUI.skin.label);
+                    _duckHuntedSubStyle.alignment = TextAnchor.MiddleCenter;
+                    _duckHuntedSubStyle.fontSize = 26;
+                }
 
-    float t = Mathf.Clamp01(_duckHuntedTimer / DuckHuntedDuration);
+                float t = Mathf.Clamp01(_duckHuntedTimer / DuckHuntedDuration);
 
-    int mainSize = Mathf.RoundToInt(Screen.height * 0.08f);   // 화면 높이 비례
-    int subSize  = Mathf.RoundToInt(Screen.height * 0.035f);
+                float overlayHeight = 140f;
+                Rect bgRect = new Rect(
+                    0f,
+                    (Screen.height - overlayHeight) * 0.5f,
+                    Screen.width,
+                    overlayHeight
+                );
 
-    _duckHuntedStyle.fontSize = mainSize;
-    _duckHuntedSubStyle.fontSize = subSize;
+                GUI.color = new Color(0f, 0f, 0f, 0.6f * t);
+                GUI.DrawTexture(bgRect, Texture2D.whiteTexture);
 
-    // 메인 텍스트와 같은 위치 계산
-    Rect mainRect = new Rect(
-        0f,
-        Screen.height * 0.30f,
-        Screen.width,
-        mainSize + 10f
-    );
+                float mainSize = _duckHuntedStyle.fontSize;
+                float subSize  = _duckHuntedSubStyle.fontSize;
 
-    // ───── 여기 추가: 검은 배경 박스 ─────
-    float paddingY  = 20f;
-    float bgHeight  = mainSize + subSize + paddingY * 2f;
-    Rect bgRect = new Rect(
-        0f,
-        mainRect.y - paddingY,
-        Screen.width,
-        bgHeight
-    );
+                Rect mainRect = new Rect(
+                    0f,
+                    bgRect.y + (overlayHeight * 0.5f) - mainSize,
+                    Screen.width,
+                    mainSize + 10f
+                );
 
-    // 흰 텍스처(_hpTex)를 검은색으로 틴트해서 사용
-    GUI.color = new Color(0f, 0f, 0f, t * 0.75f); // 알파 0.75 정도
-    GUI.DrawTexture(bgRect, _hpTex);
-    // ────────────────────────────────
+                // 메인 텍스트 색 (연한 청록)
+                GUI.color = new Color(0.8f, 1f, 0.9f, t);
+                GUI.Label(mainRect, "DUCK HUNTED", _duckHuntedStyle);
 
-    // 메인 텍스트 색 (블러드본 느낌의 연한 청록)
-    GUI.color = new Color(0.8f, 1f, 0.9f, t);
-    GUI.Label(mainRect, "DUCK HUNTED", _duckHuntedStyle);
-
-    if (!string.IsNullOrEmpty(_lastKilledBossName))
-    {
-        GUI.color = new Color(1f, 1f, 1f, t);
-        Rect subRect = new Rect(
-            0f,
-            mainRect.y + mainSize,
-            Screen.width,
-            subSize + 10f
-        );
-        GUI.Label(subRect, _lastKilledBossName, _duckHuntedSubStyle);
+                if (!string.IsNullOrEmpty(_lastKilledBossName))
+                {
+                    GUI.color = new Color(1f, 1f, 1f, t);
+                    Rect subRect = new Rect(
+                        0f,
+                        mainRect.y + mainSize,
+                        Screen.width,
+                        subSize + 10f
+                    );
+                    GUI.Label(subRect, _lastKilledBossName, _duckHuntedSubStyle);
                 }
             }
 
@@ -585,17 +644,7 @@ if (_showDuckHunted && _duckHuntedTimer > 0f)
             // 전부 소문자로 통일해서 비교
             string lower = name.ToLowerInvariant();
 
-            // 1) 제외 리스트 먼저 (잡몹/부처 형 등)
-            for (int i = 0; i < _excludeBossNames.Length; i++)
-            {
-                string ex = _excludeBossNames[i];
-                if (!string.IsNullOrEmpty(ex) && lower.Contains(ex.ToLowerInvariant()))
-                {
-                    return false;
-                }
-            }
-
-            // 2) 정확히 일치하는 이름 (한·영·일 보스들)
+            // 1) 화이트리스트 이름과 완전히 일치하는지 검사
             for (int i = 0; i < _bossNameExact.Length; i++)
             {
                 string exact = _bossNameExact[i];
@@ -605,7 +654,7 @@ if (_showDuckHunted && _duckHuntedTimer > 0f)
                 }
             }
 
-            // 3) 키워드 포함 (대장, 장, 보스 등)
+            // 2) 키워드 포함 (대장, 장, 보스 등)
             for (int i = 0; i < _bossNameKeywords.Length; i++)
             {
                 string kw = _bossNameKeywords[i];
@@ -622,7 +671,7 @@ if (_showDuckHunted && _duckHuntedTimer > 0f)
         {
             if (ch == null)
             {
-                return "Boss";
+                return string.Empty;
             }
 
             try
