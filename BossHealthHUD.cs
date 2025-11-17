@@ -49,7 +49,7 @@ namespace bosshealthhud
         private float _bossMinMaxHp = 120f;
 
         // 플레이어와 너무 멀면 보스라도 표시 안 하도록 거리 제한
-        private float _maxBossDisplayDistance = 200f;
+        private float _maxBossDisplayDistance = 50f;
 
         // HP 바용 흰 텍스처
         private Texture2D _hpTex;
@@ -337,7 +337,7 @@ namespace bosshealthhud
 
                 if (_bossList.Count > 0)
                 {
-                    Debug.Log("[BossHealthHUD] 보스 수: " + _bossList.Count);
+                    //Debug.Log("[BossHealthHUD] 보스 수: " + _bossList.Count);
                 }
             }
             catch (Exception ex)
