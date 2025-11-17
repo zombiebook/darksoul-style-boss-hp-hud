@@ -75,6 +75,7 @@ namespace bosshealthhud
             "광산장",
             "BA 대장",
             "파리 대장",
+			"축구 주장",
             "폭주 아케이드",
             "폭주 기계 거미",
             "???",
@@ -149,8 +150,6 @@ namespace bosshealthhud
         // 이름 안에 이런 키워드가 들어가면 보스로 취급 (대장급 등)
         private static readonly string[] _bossNameKeywords =
         {
-            "대장",
-            "장",
             "보스"
         };
 
