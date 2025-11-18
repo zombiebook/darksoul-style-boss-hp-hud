@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using System.IO;
+using System.Reflection;
 using ItemStatsSystem;
 using UnityEngine;
 using Duckov;    // AudioManager, CharacterMainControl, Health
@@ -55,6 +55,7 @@ namespace bosshealthhud
         private float _bossMinMaxHp = 120f;
 
         // 플레이어와 너무 멀면 보스라도 표시 안 하도록 거리 제한
+        // (테스트 편하게 200f로 넉넉하게 잡음)
         private float _maxBossDisplayDistance = 20f;
 
         // HP 바용 흰 텍스처
@@ -64,9 +65,13 @@ namespace bosshealthhud
         private GUIStyle _nameStyle;
         private GUIStyle _hpTextStyle;
 
-        // 입장 배너 스타일
+        // ───── 입장 배너 관련 ─────
         private GUIStyle _enterAreaBannerStyle;
         private GUIStyle _enterAreaBannerSubStyle;
+        private string _enterAreaTitle;
+        private float _enterAreaShowEndTime;
+        private bool _hasEnterAreaBannerShown;
+        private string _lastSceneName;
 
         // ───── DUCK HUNTED 오버레이 관련 ─────
         private bool _showDuckHunted;
@@ -166,18 +171,10 @@ namespace bosshealthhud
         {
         };
 
-        // ───── 입장 배너용 필드 ─────
-        private string _enterAreaTitle;
-        private float _enterAreaShowEndTime;
-        private bool _hasEnterAreaBannerShown;
-        private string _lastSceneName;
-
-        // 게임 언어 캐시 (Duckov 내부 Localization 추측용)
+        // ───── 게임 언어 캐시 + 수동 오버라이드 ─────
         private bool _cachedLangChecked;
         private GameLanguage _cachedGameLanguage = GameLanguage.Korean;
-
-        // 사용자가 F9로 강제로 고른 HUD 언어 (null이면 자동)
-        private GameLanguage? _overrideLang = null;
+        private GameLanguage? _overrideLang = null;   // F9로 강제한 언어 (null이면 자동)
 
         private void Awake()
         {
@@ -188,7 +185,18 @@ namespace bosshealthhud
 
         private void Update()
         {
-            // 1) 씬 변경 감지 → 배너 상태 리셋
+            // 플레이어/카메라는 계속 체크
+            if (_player == null || !_player)
+            {
+                TryFindPlayer();
+            }
+
+            if (_mainCamera == null)
+            {
+                TryFindMainCamera();
+            }
+
+            // ── 씬 변경 감지해서 배너 상태 리셋 ──
             var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
             string sceneName = scene.name;
 
@@ -202,7 +210,7 @@ namespace bosshealthhud
                 Debug.Log("[BossHealthHUD] Scene changed -> " + sceneName);
             }
 
-            // 2) 플레이어가 잡힌 뒤, 씬마다 한 번만 입장 배너 표시
+            // ── 씬 진입 후, 플레이어가 있으면 배너 한 번만 ──
             if (!_hasEnterAreaBannerShown && _player != null)
             {
                 _hasEnterAreaBannerShown = true;
@@ -221,7 +229,7 @@ namespace bosshealthhud
             }
 
             // F9로 HUD 언어 강제 변경 (Auto → JP → EN → KR → Auto)
-            if (UnityEngine.Input.GetKeyDown(KeyCode.F9))
+            if (UnityEngine.Input.GetKeyDown(KeyCode.F11))
             {
                 if (_overrideLang == null)
                 {
@@ -241,9 +249,9 @@ namespace bosshealthhud
                 }
 
                 Debug.Log("[BossHealthHUD] Language override: " +
-                          (_overrideLang.HasValue ? _overrideLang.ToString() : "Auto(Game)"));
+                          (_overrideLang.HasValue ? _overrideLang.ToString() : "Auto(System)"));
 
-                // 배너가 아직 떠있다면, 바로 언어 반영
+                // 배너가 떠 있는 중이면 언어 바로 재계산
                 if (_hasEnterAreaBannerShown && Time.time <= _enterAreaShowEndTime)
                 {
                     _enterAreaTitle = GetCurrentAreaTitle();
@@ -255,26 +263,16 @@ namespace bosshealthhud
                 return;
             }
 
-            if (_mainCamera == null)
-            {
-                TryFindMainCamera();
-            }
-
-            if (_player == null)
-            {
-                TryFindPlayer();
-            }
-
-            // 3) 보스 HP 변화 체크 (죽었는지 감지)
+            // 🔁 1) 보스 HP 변화 체크 (죽었는지 감지)
             UpdateBossDeathState();
 
-            // 4) 15프레임마다 보스 목록 재스캔
+            // 🔁 2) 15프레임마다 보스 목록 갱신
             if (Time.frameCount % 15 == 0)
             {
                 ScanBosses();
             }
 
-            // 5) DUCK HUNTED 페이드
+            // ⏱ 3) DUCK HUNTED 페이드 타이머
             if (_showDuckHunted)
             {
                 _duckHuntedTimer -= Time.deltaTime;
@@ -296,16 +294,17 @@ namespace bosshealthhud
             if (string.IsNullOrEmpty(sceneName))
                 return "레이드 시작";
 
-            string lower = scene.name.ToLowerInvariant();
+            string lower = sceneName.ToLowerInvariant();
             GameLanguage lang = GetGameLanguage();
             bool isJap = (lang == GameLanguage.Japanese);
             bool isEng = (lang == GameLanguage.English);
+            // 한국어 + 그 외는 기본 한국어
             bool isKor = (lang == GameLanguage.Korean || (!isJap && !isEng));
 
             // 기지(Base)
             if (lower == "base" || lower.Contains("base"))
             {
-                if (isJap) return "バンカー";
+                if (isJap) return "バンカー";   // 기억해달라 한 매핑
                 if (isEng) return "Bunker";
                 return "벙커";
             }
@@ -362,162 +361,38 @@ namespace bosshealthhud
             return sceneName;
         }
 
-        // 게임 옵션 언어를 최대한 추측해서 한/일/영 중 하나로 반환
+        // 게임 언어: 일단 시스템 언어 + F9 오버라이드
         private GameLanguage GetGameLanguage()
         {
-            // 0) F9로 강제한 언어가 있으면 그걸 먼저 사용
             if (_overrideLang.HasValue)
                 return _overrideLang.Value;
 
             if (_cachedLangChecked)
                 return _cachedGameLanguage;
 
-            GameLanguage result = GameLanguage.Korean; // 기본값: 한국어
+            GameLanguage result;
 
-            try
+            switch (Application.systemLanguage)
             {
-                Assembly asm = typeof(CharacterMainControl).Assembly;
-                if (asm != null)
-                {
-                    string[] typeNames =
-                    {
-                        "Duckov.Settings.GameSettings",
-                        "Duckov.Settings.LanguageSettings",
-                        "Duckov.Localization.LocalizationManager",
-                        "Duckov.Localization.LanguageManager"
-                    };
-
-                    string[] memberNames =
-                    {
-                        "CurrentLanguage",
-                        "Language",
-                        "CurrentLocale"
-                    };
-
-                    for (int ti = 0; ti < typeNames.Length; ti++)
-                    {
-                        string typeName = typeNames[ti];
-                        Type t = asm.GetType(typeName, false);
-                        if (t == null) continue;
-
-                        for (int mi = 0; mi < memberNames.Length; mi++)
-                        {
-                            string mn = memberNames[mi];
-
-                            // static property
-                            PropertyInfo pi = t.GetProperty(mn,
-                                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-                            if (pi != null)
-                            {
-                                object val = null;
-                                try { val = pi.GetValue(null, null); } catch { }
-                                GameLanguage? parsed = TryParseLanguageFromValue(val);
-                                if (parsed.HasValue)
-                                {
-                                    result = parsed.Value;
-                                    goto Done;
-                                }
-                            }
-
-                            // static field
-                            FieldInfo fi = t.GetField(mn,
-                                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-                            if (fi != null)
-                            {
-                                object val = null;
-                                try { val = fi.GetValue(null); } catch { }
-                                GameLanguage? parsed = TryParseLanguageFromValue(val);
-                                if (parsed.HasValue)
-                                {
-                                    result = parsed.Value;
-                                    goto Done;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 위에서 못 찾았으면 폴백: 시스템 언어
-                switch (Application.systemLanguage)
-                {
-                    case SystemLanguage.Japanese:
-                        result = GameLanguage.Japanese;
-                        break;
-                    case SystemLanguage.English:
-                        result = GameLanguage.English;
-                        break;
-                    case SystemLanguage.Korean:
-                        result = GameLanguage.Korean;
-                        break;
-                    default:
-                        result = GameLanguage.Other;
-                        break;
-                }
-            }
-            catch
-            {
-                // 예외 나면 시스템 언어만 기준
-                switch (Application.systemLanguage)
-                {
-                    case SystemLanguage.Japanese:
-                        result = GameLanguage.Japanese;
-                        break;
-                    case SystemLanguage.English:
-                        result = GameLanguage.English;
-                        break;
-                    case SystemLanguage.Korean:
-                        result = GameLanguage.Korean;
-                        break;
-                    default:
-                        result = GameLanguage.Other;
-                        break;
-                }
+                case SystemLanguage.Japanese:
+                    result = GameLanguage.Japanese;
+                    break;
+                case SystemLanguage.English:
+                    result = GameLanguage.English;
+                    break;
+                case SystemLanguage.Korean:
+                    result = GameLanguage.Korean;
+                    break;
+                default:
+                    result = GameLanguage.Other;
+                    break;
             }
 
-        Done:
             _cachedLangChecked = true;
             _cachedGameLanguage = result;
-            Debug.Log("[BossHealthHUD] Detected game language: " + result);
+
+            Debug.Log("[BossHealthHUD] Detected game language (system): " + result);
             return result;
-        }
-
-        private static GameLanguage? TryParseLanguageFromValue(object value)
-        {
-            if (value == null) return null;
-
-            string s = value.ToString();
-            if (string.IsNullOrEmpty(s)) return null;
-
-            s = s.ToLowerInvariant();
-
-            // 일본어
-            if (s == "ja" || s == "ja-jp" || s.Contains("ja_jp") ||
-                s.Contains("jap") ||
-                s.Contains("日本") || s.Contains("にほん") || s.Contains("にっぽん") ||
-                s.Contains("日本語"))
-            {
-                return GameLanguage.Japanese;
-            }
-
-            // 한국어
-            if (s == "ko" || s == "ko-kr" || s.Contains("ko_kr") ||
-                s.Contains("kor") ||
-                s.Contains("korean") ||
-                s.Contains("한국") || s.Contains("한글"))
-            {
-                return GameLanguage.Korean;
-            }
-
-            // 영어
-            if (s == "en" || s == "en-us" || s == "en-gb" ||
-                s.Contains("english") ||
-                s.Contains("eng") ||
-                s.Contains("英語") || s.Contains("えいご"))
-            {
-                return GameLanguage.English;
-            }
-
-            return null;
         }
 
         private void TryFindMainCamera()
@@ -525,6 +400,10 @@ namespace bosshealthhud
             try
             {
                 _mainCamera = Camera.main;
+                if (_mainCamera != null)
+                {
+                    Debug.Log("[BossHealthHUD] Camera.main 찾음");
+                }
             }
             catch (Exception ex)
             {
@@ -592,7 +471,7 @@ namespace bosshealthhud
                     float maxHp = h.MaxHealth;
                     float curHp = h.CurrentHealth;
 
-                    // 죽은 보스는 제외
+                    // 이미 죽은 보스는 제외
                     if (curHp <= 0f)
                     {
                         continue;
@@ -620,6 +499,7 @@ namespace bosshealthhud
 
                 if (candidates.Count == 0)
                 {
+                    _bossList.Clear();
                     return;
                 }
 
@@ -641,6 +521,8 @@ namespace bosshealthhud
                         _bossList.Add(boss);
                     }
                 }
+
+                Debug.Log("[BossHealthHUD] 보스 스캔 결과: " + _bossList.Count);
             }
             catch (Exception ex)
             {
@@ -762,6 +644,11 @@ namespace bosshealthhud
 
             try
             {
+                // ── 디버그: 현재 HUD 언어 표시 (왼쪽 위) ──
+                GameLanguage langForDebug = GetGameLanguage();
+                GUI.color = new Color(1f, 1f, 1f, 0.6f);
+                GUI.Label(new Rect(10f, 10f, 220f, 20f), "HUD Lang: " + langForDebug);
+
                 // ====== 맵 입장 배너 ======
                 if (!string.IsNullOrEmpty(_enterAreaTitle) &&
                     Time.time <= _enterAreaShowEndTime)
@@ -784,247 +671,229 @@ namespace bosshealthhud
                             new Color(1f, 1f, 1f, 0.85f);
                     }
 
-                    // ====== 맵 입장 배너 ======
-                    if (!string.IsNullOrEmpty(_enterAreaTitle) &&
-                        Time.time <= _enterAreaShowEndTime)
+                    float bannerHeight = 80f;
+                    float y = Screen.height * 0.22f;
+
+                    Rect bgRect = new Rect(
+                        0f,
+                        y,
+                        Screen.width,
+                        bannerHeight
+                    );
+
+                    GUI.color = new Color(0f, 0f, 0f, 0.7f);
+                    GUI.DrawTexture(bgRect, Texture2D.whiteTexture);
+
+                    // "지금 진입 중" (윗줄, 중앙) - 언어별 텍스트
+                    GUI.color = new Color(1f, 1f, 1f, 0.9f);
+                    Rect subRect = new Rect(
+                        0f,
+                        y + 4f,
+                        Screen.width,
+                        24f
+                    );
+
+                    string enteringText;
+                    switch (GetGameLanguage())
                     {
-                        if (_enterAreaBannerStyle == null)
+                        case GameLanguage.Japanese:
+                            enteringText = "エリア進入中";
+                            break;
+                        case GameLanguage.English:
+                            enteringText = "Entering Area";
+                            break;
+                        default:
+                            enteringText = "지금 진입 중";
+                            break;
+                    }
+
+                    GUI.Label(subRect, enteringText, _enterAreaBannerSubStyle);
+
+                    // 맵 이름 (아랫줄, 크게)
+                    GUI.color = Color.white;
+                    Rect titleRect = new Rect(
+                        0f,
+                        y + 26f,
+                        Screen.width,
+                        bannerHeight - 26f
+                    );
+                    GUI.Label(titleRect, _enterAreaTitle, _enterAreaBannerStyle);
+                }
+
+                // ====== 보스 HP 바들 그리기 ======
+                if (_player != null && _player && _bossList != null && _bossList.Count > 0)
+                {
+                    if (_nameStyle == null)
+                    {
+                        _nameStyle = new GUIStyle(GUI.skin.label);
+                        _nameStyle.alignment = TextAnchor.MiddleCenter;
+                        _nameStyle.fontSize = 22;
+                        _nameStyle.normal.textColor = Color.white;
+                    }
+
+                    if (_hpTextStyle == null)
+                    {
+                        _hpTextStyle = new GUIStyle(GUI.skin.label);
+                        _hpTextStyle.alignment = TextAnchor.MiddleCenter;
+                        _hpTextStyle.fontSize = 18;
+                        _hpTextStyle.normal.textColor = Color.white;
+                    }
+
+                    float barWidth  = Screen.width * 0.75f;
+                    float barHeight = 32f;
+
+                    float bottomMargin = 230f;
+
+                    float baseX = (Screen.width - barWidth) * 0.5f;
+                    float baseY = Screen.height - bottomMargin - barHeight;
+
+                    float verticalSpacing = barHeight + 30f;
+
+                    if (_hpTex == null)
+                    {
+                        _hpTex = new Texture2D(1, 1, TextureFormat.RGBA32, false);
+                        _hpTex.SetPixel(0, 0, Color.white);
+                        _hpTex.Apply();
+                    }
+
+                    int drawnCount = 0;
+
+                    for (int i = 0; i < _bossList.Count && drawnCount < MaxBossBars; i++)
+                    {
+                        CharacterMainControl boss = _bossList[i];
+                        if (boss == null || !boss)
                         {
-                            _enterAreaBannerStyle = new GUIStyle(GUI.skin.label);
-                            _enterAreaBannerStyle.alignment = TextAnchor.MiddleCenter;
-                            _enterAreaBannerStyle.fontSize = 32;
-                            _enterAreaBannerStyle.fontStyle = FontStyle.Bold;
-                            _enterAreaBannerStyle.normal.textColor = Color.white;
+                            continue;
                         }
 
-                        if (_enterAreaBannerSubStyle == null)
+                        Health h = boss.Health;
+                        if (h == null)
                         {
-                            _enterAreaBannerSubStyle = new GUIStyle(GUI.skin.label);
-                            _enterAreaBannerSubStyle.alignment = TextAnchor.MiddleCenter;
-                            _enterAreaBannerSubStyle.fontSize = 18;
-                            _enterAreaBannerSubStyle.normal.textColor =
-                                new Color(1f, 1f, 1f, 0.85f);
+                            continue;
                         }
 
-                        float bannerHeight = 80f;
-                        float y = Screen.height * 0.22f;
+                        float maxHp = h.MaxHealth;
+                        float curHp = h.CurrentHealth;
 
-                        Rect bgRect = new Rect(
-                            0f,
-                            y,
-                            Screen.width,
-                            bannerHeight
+                        if (maxHp <= 0f || curHp <= 0f)
+                        {
+                            continue;
+                        }
+
+                        if (maxHp < _bossMinMaxHp)
+                        {
+                            continue;
+                        }
+
+                        float dist = Vector3.Distance(
+                            _player.transform.position,
+                            boss.transform.position
+                        );
+                        if (dist > _maxBossDisplayDistance)
+                        {
+                            continue;
+                        }
+
+                        float ratio = Mathf.Clamp01(curHp / maxHp);
+
+                        float x = baseX;
+                        float y = baseY - drawnCount * verticalSpacing;
+
+                        // ░ 테두리 (거의 검정에 가까운 어두운 빨강)
+                        GUI.color = new Color(0.15f, 0f, 0f, 0.8f);
+                        GUI.DrawTexture(new Rect(x, y, barWidth, barHeight), _hpTex);
+
+                        // █ 실제 HP (밝은 빨강)
+                        GUI.color = new Color(0.9f, 0.1f, 0.1f, 0.95f);
+                        GUI.DrawTexture(
+                            new Rect(x + 2f, y + 2f, (barWidth - 4f) * ratio, barHeight - 4f),
+                            _hpTex
                         );
 
-                        GUI.color = new Color(0f, 0f, 0f, 0.7f);
-                        GUI.DrawTexture(bgRect, Texture2D.whiteTexture);
-
-                        // ── 여기부터 언어별 "지금 진입 중" ──
-                        GUI.color = new Color(1f, 1f, 1f, 0.9f);
-                        Rect subRect = new Rect(
-                            0f,
-                            y + 4f,
-                            Screen.width,
-                            24f
-                        );
-
-                        string enteringText;
-                        switch (GetGameLanguage())
-                        {
-                            case GameLanguage.Japanese:
-                                enteringText = "エリア進入中";
-                                break;
-                            case GameLanguage.English:
-                                enteringText = "Entering Area";
-                                break;
-                            default:
-                                enteringText = "지금 진입 중";
-                                break;
-                        }
-
-                        GUI.Label(subRect, enteringText, _enterAreaBannerSubStyle);
-
-                        // 맵 이름 (아랫줄, 크게)
+                        // 이름 + HP 숫자
                         GUI.color = Color.white;
-                        Rect titleRect = new Rect(
-                            0f,
-                            y + 26f,
-                            Screen.width,
-                            bannerHeight - 26f
+
+                        string bossName = SafeGetName(boss);
+
+                        Rect nameRect = new Rect(
+                            x,
+                            y - 29f,
+                            barWidth,
+                            30f
                         );
-                        GUI.Label(titleRect, _enterAreaTitle, _enterAreaBannerStyle);
+
+                        Rect hpRect = new Rect(
+                            x + 2f,
+                            y,
+                            barWidth - 4f,
+                            barHeight
+                        );
+
+                        GUI.Label(nameRect, bossName, _nameStyle);
+                        GUI.Label(
+                            hpRect,
+                            string.Format("{0:0}/{1:0}  ({2:P0})", curHp, maxHp, ratio),
+                            _hpTextStyle
+                        );
+
+                        drawnCount++;
+                    }
+                }
+
+                // ====== DUCK HUNTED 오버레이 ======
+                if (_showDuckHunted && _duckHuntedTimer > 0f)
+                {
+                    if (_duckHuntedStyle == null)
+                    {
+                        _duckHuntedStyle = new GUIStyle(GUI.skin.label);
+                        _duckHuntedStyle.alignment = TextAnchor.MiddleCenter;
+                        _duckHuntedStyle.fontSize = 56;
+                        _duckHuntedStyle.fontStyle = FontStyle.Bold;
                     }
 
-                    // ====== 보스 HP 바들 그리기 ======
-                    if (_player != null && _player && _bossList != null && _bossList.Count > 0)
+                    if (_duckHuntedSubStyle == null)
                     {
-                        if (_nameStyle == null)
-                        {
-                            _nameStyle = new GUIStyle(GUI.skin.label);
-                            _nameStyle.alignment = TextAnchor.MiddleCenter;
-                            _nameStyle.fontSize = 22;
-                            _nameStyle.normal.textColor = Color.white;
-                        }
-
-                        if (_hpTextStyle == null)
-                        {
-                            _hpTextStyle = new GUIStyle(GUI.skin.label);
-                            _hpTextStyle.alignment = TextAnchor.MiddleCenter;
-                            _hpTextStyle.fontSize = 18;
-                            _hpTextStyle.normal.textColor = Color.white;
-                        }
-
-                        float barWidth = Screen.width * 0.75f;
-                        float barHeight = 32f;
-
-                        float bottomMargin = 230f;
-
-                        float baseX = (Screen.width - barWidth) * 0.5f;
-                        float baseY = Screen.height - bottomMargin - barHeight;
-
-                        float verticalSpacing = barHeight + 30f;
-
-                        if (_hpTex == null)
-                        {
-                            _hpTex = new Texture2D(1, 1, TextureFormat.RGBA32, false);
-                            _hpTex.SetPixel(0, 0, Color.white);
-                            _hpTex.Apply();
-                        }
-
-                        int drawnCount = 0;
-
-                        for (int i = 0; i < _bossList.Count && drawnCount < MaxBossBars; i++)
-                        {
-                            CharacterMainControl boss = _bossList[i];
-                            if (boss == null || !boss)
-                            {
-                                continue;
-                            }
-
-                            Health h = boss.Health;
-                            if (h == null)
-                            {
-                                continue;
-                            }
-
-                            float maxHp = h.MaxHealth;
-                            float curHp = h.CurrentHealth;
-
-                            if (maxHp <= 0f || curHp <= 0f)
-                            {
-                                continue;
-                            }
-
-                            if (maxHp < _bossMinMaxHp)
-                            {
-                                continue;
-                            }
-
-                            float dist = Vector3.Distance(_player.transform.position,
-                                boss.transform.position);
-                            if (dist > _maxBossDisplayDistance)
-                            {
-                                continue;
-                            }
-
-                            float ratio = Mathf.Clamp01(curHp / maxHp);
-
-                            float x = baseX;
-                            float y = baseY - drawnCount * verticalSpacing;
-
-                            GUI.color = new Color(0.15f, 0f, 0f, 0.8f);
-                            GUI.DrawTexture(new Rect(x, y, barWidth, barHeight), _hpTex);
-
-                            GUI.color = new Color(0.9f, 0.1f, 0.1f, 0.95f);
-                            GUI.DrawTexture(
-                                new Rect(x + 2f, y + 2f, (barWidth - 4f) * ratio, barHeight - 4f),
-                                _hpTex
-                            );
-
-                            GUI.color = Color.white;
-
-                            string bossName = SafeGetName(boss);
-
-                            Rect nameRect = new Rect(
-                                x,
-                                y - 29f,
-                                barWidth,
-                                30f
-                            );
-
-                            Rect hpRect = new Rect(
-                                x + 2f,
-                                y,
-                                barWidth - 4f,
-                                barHeight
-                            );
-
-                            GUI.Label(nameRect, bossName, _nameStyle);
-                            GUI.Label(
-                                hpRect,
-                                string.Format("{0:0}/{1:0}  ({2:P0})", curHp, maxHp, ratio),
-                                _hpTextStyle
-                            );
-
-                            drawnCount++;
-                        }
+                        _duckHuntedSubStyle = new GUIStyle(GUI.skin.label);
+                        _duckHuntedSubStyle.alignment = TextAnchor.MiddleCenter;
+                        _duckHuntedSubStyle.fontSize = 26;
                     }
 
-                    // ====== DUCK HUNTED 오버레이 ======
-                    if (_showDuckHunted && _duckHuntedTimer > 0f)
+                    float t = Mathf.Clamp01(_duckHuntedTimer / DuckHuntedDuration);
+
+                    float overlayHeight = 140f;
+                    Rect bgRect = new Rect(
+                        0f,
+                        (Screen.height - overlayHeight) * 0.5f,
+                        Screen.width,
+                        overlayHeight
+                    );
+
+                    GUI.color = new Color(0f, 0f, 0f, 0.6f * t);
+                    GUI.DrawTexture(bgRect, Texture2D.whiteTexture);
+
+                    float mainSize = _duckHuntedStyle.fontSize;
+                    float subSize = _duckHuntedSubStyle.fontSize;
+
+                    Rect mainRect = new Rect(
+                        0f,
+                        bgRect.y + (overlayHeight * 0.5f) - mainSize,
+                        Screen.width,
+                        mainSize + 10f
+                    );
+
+                    GUI.color = new Color(0.8f, 1f, 0.9f, t);
+                    GUI.Label(mainRect, "DUCK HUNTED", _duckHuntedStyle);
+
+                    if (!string.IsNullOrEmpty(_lastKilledBossName))
                     {
-                        if (_duckHuntedStyle == null)
-                        {
-                            _duckHuntedStyle = new GUIStyle(GUI.skin.label);
-                            _duckHuntedStyle.alignment = TextAnchor.MiddleCenter;
-                            _duckHuntedStyle.fontSize = 56;
-                            _duckHuntedStyle.fontStyle = FontStyle.Bold;
-                        }
-
-                        if (_duckHuntedSubStyle == null)
-                        {
-                            _duckHuntedSubStyle = new GUIStyle(GUI.skin.label);
-                            _duckHuntedSubStyle.alignment = TextAnchor.MiddleCenter;
-                            _duckHuntedSubStyle.fontSize = 26;
-                        }
-
-                        float t = Mathf.Clamp01(_duckHuntedTimer / DuckHuntedDuration);
-
-                        float overlayHeight = 140f;
-                        Rect bgRect = new Rect(
+                        GUI.color = new Color(1f, 1f, 1f, t);
+                        Rect subRect2 = new Rect(
                             0f,
-                            (Screen.height - overlayHeight) * 0.5f,
+                            mainRect.y + mainSize,
                             Screen.width,
-                            overlayHeight
+                            subSize + 10f
                         );
-
-                        GUI.color = new Color(0f, 0f, 0f, 0.6f * t);
-                        GUI.DrawTexture(bgRect, Texture2D.whiteTexture);
-
-                        float mainSize = _duckHuntedStyle.fontSize;
-                        float subSize = _duckHuntedSubStyle.fontSize;
-
-                        Rect mainRect = new Rect(
-                            0f,
-                            bgRect.y + (overlayHeight * 0.5f) - mainSize,
-                            Screen.width,
-                            mainSize + 10f
-                        );
-
-                        GUI.color = new Color(0.8f, 1f, 0.9f, t);
-                        GUI.Label(mainRect, "DUCK HUNTED", _duckHuntedStyle);
-
-                        if (!string.IsNullOrEmpty(_lastKilledBossName))
-                        {
-                            GUI.color = new Color(1f, 1f, 1f, t);
-                            Rect subRect2 = new Rect(
-                                0f,
-                                mainRect.y + mainSize,
-                                Screen.width,
-                                subSize + 10f
-                            );
-                            GUI.Label(subRect2, _lastKilledBossName, _duckHuntedSubStyle);
-                        }
+                        GUI.Label(subRect2, _lastKilledBossName, _duckHuntedSubStyle);
                     }
                 }
             }
