@@ -329,8 +329,8 @@ namespace bosshealthhud
             if (lower == "level_farm_01")
             {
                 if (isJap) return "農場町・どこか";
-                if (isEng) return "Farm Town - South";
-                return "농장마을 남부";
+                if (isEng) return "Farm Town - somewhere";
+                return "농장마을 어딘가";
             }
 
             // 농장마을 : Level_Farm_Main
@@ -348,6 +348,14 @@ namespace bosshealthhud
                 if (isEng) return "J-Lab";
                 return "J-Lab 연구소";
             }
+
+// J-Lab 연구소 입구 : Level_Farm_JLab_Facility			
+			if (lower == "level_farm_jlab_facility")
+{
+    if (isJap) return "J-Lab研究所・入口";
+    if (isEng) return "J-Lab Entrance";
+    return "J-Lab 연구소 입구";
+}
 
             // 폭풍 구역 : Level_StormZone_1
             if (lower == "level_stormzone_1" || lower.StartsWith("level_stormzone"))
