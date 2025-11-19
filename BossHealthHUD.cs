@@ -413,12 +413,6 @@ namespace bosshealthhud
                         continue;
                     }
 
-                    // 꼬마덕(128) 이상만 보스로 취급 (보정값 120)
-                    if (maxHp < _bossMinMaxHp)
-                    {
-                        continue;
-                    }
-
                     // 거리 체크는 이제 안 한다.
                     candidates.Add(ch);
                 }
@@ -690,12 +684,6 @@ namespace bosshealthhud
                     float curHp = h.CurrentHealth;
 
                     if (maxHp <= 0f || curHp <= 0f)
-                    {
-                        continue;
-                    }
-
-                    // 꼬마덕(128) 이상만 보스표시 (보정값 120)
-                    if (maxHp < _bossMinMaxHp)
                     {
                         continue;
                     }
