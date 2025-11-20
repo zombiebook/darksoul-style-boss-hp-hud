@@ -640,8 +640,8 @@ namespace bosshealthhud
                     _hpTextStyle.normal.textColor = Color.white;
                 }
 
-                float barWidth  = Screen.width * 0.75f;
-                float barHeight = 32f;   // 바 두께
+                float barWidth  = Screen.width * 0.60f; 가로폭 줄이기
+                float barHeight = 24f;   // 바 두께
 
                 float bottomMargin = 230f;   // 전체 위치
 
@@ -649,7 +649,7 @@ namespace bosshealthhud
                 float baseY = Screen.height - bottomMargin - barHeight;
 
                 // 바들 간 적당한 간격
-                float verticalSpacing = barHeight + 30f;
+                float verticalSpacing = barHeight + 24f;
 
                 if (_hpTex == null)
                 {
@@ -712,9 +712,9 @@ namespace bosshealthhud
                     // 이름은 바 바로 위
                     Rect nameRect = new Rect(
                         x,
-                        y - 29f,
+                        y - 24f,
                         barWidth,
-                        30f
+                        24f
                     );
 
                     // HP 텍스트는 막대 안 중앙
@@ -852,3 +852,4 @@ namespace bosshealthhud
         }
     }
 }
+
