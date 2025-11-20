@@ -42,7 +42,7 @@ namespace bosshealthhud
         // HUD On/Off
         private bool _uiEnabled = true;       // F8 토글
 
-        // 꼬마덕 HP가 128이라, 그보다 살짝 여유 있게 120 이상을 보스로 취급
+        // (예전 꼬마덕 기준으로 쓰던 값, 지금은 필터에는 안 씀)
         private float _bossMinMaxHp = 120f;
 
         // (지금은 사용 안 하지만, 나중을 위해 남겨두는 거리 값)
@@ -404,7 +404,6 @@ namespace bosshealthhud
                         continue;
                     }
 
-                    float maxHp = h.MaxHealth;
                     float curHp = h.CurrentHealth;
 
                     // 죽은 보스는 제외
@@ -413,7 +412,7 @@ namespace bosshealthhud
                         continue;
                     }
 
-                    // 거리 체크는 이제 안 한다.
+                    // HP 크기는 이제 신경 안 씀 (이름만 맞으면 보스)
                     candidates.Add(ch);
                 }
 
@@ -640,11 +639,11 @@ namespace bosshealthhud
                     _hpTextStyle.normal.textColor = Color.white;
                 }
 
-                float barWidth  = Screen.width * 0.60f; //가로폭 줄이기
-                float barHeight = 24f;   // 바 두께
+                // 🔹 HP바 크기 (조금 작게)
+                float barWidth  = Screen.width * 0.60f;  // 살짝 줄인 가로폭
+                float barHeight = 24f;                   // 줄인 두께
 
-                float bottomMargin = 230f;   // 전체 위치
-
+                float bottomMargin = 230f;               // 전체 세로 위치는 기존 유지
                 float baseX = (Screen.width - barWidth) * 0.5f;
                 float baseY = Screen.height - bottomMargin - barHeight;
 
@@ -709,20 +708,20 @@ namespace bosshealthhud
 
                     string bossName = SafeGetName(boss);
 
-                    // 이름은 바 바로 위
+                    // 🔹 이름은 바 위쪽, 높이 넉넉하게(글씨 안 잘리게)
                     Rect nameRect = new Rect(
                         x,
-                        y - 24f,
+                        y - 26f,   // 바 위로 살짝 올림
                         barWidth,
-                        24f
+                        28f
                     );
 
-                    // HP 텍스트는 막대 안 중앙
+                    // 🔹 HP 텍스트는 막대 안 + 살짝 크게(위아래 여유)
                     Rect hpRect = new Rect(
                         x + 2f,
-                        y,
+                        y - 2f,              // 위로 2픽셀
                         barWidth - 4f,
-                        barHeight
+                        barHeight + 4f       // 위아래 여유
                     );
 
                     GUI.Label(nameRect, bossName, _nameStyle);
@@ -852,5 +851,3 @@ namespace bosshealthhud
         }
     }
 }
-
-
