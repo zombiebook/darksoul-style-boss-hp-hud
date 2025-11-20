@@ -640,7 +640,7 @@ namespace bosshealthhud
                     _hpTextStyle.normal.textColor = Color.white;
                 }
 
-                float barWidth  = Screen.width * 0.60f; 가로폭 줄이기
+                float barWidth  = Screen.width * 0.60f; //가로폭 줄이기
                 float barHeight = 24f;   // 바 두께
 
                 float bottomMargin = 230f;   // 전체 위치
@@ -852,4 +852,5 @@ namespace bosshealthhud
         }
     }
 }
+
 
