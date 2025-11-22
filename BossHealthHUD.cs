@@ -1,5 +1,7 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.IO;
 using ItemStatsSystem;
@@ -32,24 +34,27 @@ namespace bosshealthhud
     public class BossHealthHUDManager : MonoBehaviour
     {
         // ───── 기본 ─────
-       
         private Camera _mainCamera;
         private CharacterMainControl _player;
 
-        // 🔽 FindObjectsOfType 호출 빈도 줄이기용 타이머
-        private float _scanInterval = 0.8f;   // 몇 초마다 한 번 보스 스캔할지 (4K면 0.8~1.0 추천)
-        private float _scanTimer = 0.2f;
         // 여러 보스를 동시에 표시하기 위한 리스트
         private readonly List<CharacterMainControl> _bossList =
             new List<CharacterMainControl>();
 
+        // 🔁 FindObjectsOfType 부하 줄이기용
+        private float _scanInterval = 0.8f;   // 몇 초마다 보스 스캔할지
+        private float _scanTimer = 0.2f;
+
+        // 🔧 HP 바 위치 조절 (Y 오프셋, 픽셀 단위) – 양수: 위로, 음수: 아래로
+        private float _barOffsetY = 0f;
+
         // HUD On/Off
         private bool _uiEnabled = true;       // F8 토글
 
-        // (예전 꼬마덕 기준으로 쓰던 값, 지금은 필터에는 안 씀)
+        // 꼬마덕 HP가 128이라, 그보다 살짝 여유 있게 120 이상을 보스로 취급
         private float _bossMinMaxHp = 120f;
 
-        // (지금은 사용 안 하지만, 나중을 위해 남겨두는 거리 값)
+        // 플레이어와 너무 멀면 보스라도 표시 안 하도록 거리 제한
         private float _maxBossDisplayDistance = 20f;
 
         // HP 바용 흰 텍스처
@@ -58,14 +63,6 @@ namespace bosshealthhud
         // HP/이름 텍스트 스타일
         private GUIStyle _nameStyle;
         private GUIStyle _hpTextStyle;
-
-        // ───── 맵 진입 배너 ─────
-        private string _enterAreaTitle;
-        private float _enterAreaShowEndTime;
-        private bool _hasEnterAreaBannerShown;
-        private GUIStyle _areaBannerMainStyle;   // 지역 이름
-        private GUIStyle _areaBannerSubStyle;    // "지금 진입 중"
-        private string _lastSceneName;           // 마지막으로 본 씬 이름
 
         // ───── DUCK HUNTED 오버레이 관련 ─────
         private bool _showDuckHunted;
@@ -80,10 +77,6 @@ namespace bosshealthhud
             new Dictionary<CharacterMainControl, float>();
         private readonly List<CharacterMainControl> _cleanupList =
             new List<CharacterMainControl>();
-
-        // HP가 한 번이라도 깎여서 공개된 보스들
-        private readonly HashSet<CharacterMainControl> _revealedBosses =
-            new HashSet<CharacterMainControl>();
 
         // 보스 HUD를 띄울 이름들 (화이트리스트: 한·영·일)
         private static readonly string[] _bossNameExact =
@@ -114,6 +107,7 @@ namespace bosshealthhud
             "폭풍?",
             "일진",
             "급속 단장",
+            "방랑자",
             "라이트맨",
             "Pato Chapo",
             "Man of Light",
@@ -174,11 +168,68 @@ namespace bosshealthhud
             Debug.Log("[BossHealthHUD] Manager Awake");
             TryFindMainCamera();
             TryFindPlayer();
+            LoadConfig();
+            _scanTimer = 0.2f;   // 시작 직후 한 번 빨리 스캔
+        }
 
-            _scanTimer = 0.2f;   // 게임 시작 직후 한 번 빨리 스캔
-            // 첫 씬 이름 기록
-            var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
-            _lastSceneName = scene.name;
+        private void LoadConfig()
+        {
+            try
+            {
+                string dllPath = Assembly.GetExecutingAssembly().Location;
+                string folder = Path.GetDirectoryName(dllPath);
+                if (string.IsNullOrEmpty(folder))
+                {
+                    return;
+                }
+
+                string cfgPath = Path.Combine(folder, "BossHealthHUD.cfg");
+
+                if (!File.Exists(cfgPath))
+                {
+                    string[] lines =
+                    {
+                        "# BossHealthHUD configuration",
+                        "# bar_offset_y = HP 바 세로 위치 조절 (픽셀)",
+                        "#   양수: 화면 위쪽으로 이동,  음수: 화면 아래쪽으로 이동",
+                        "bar_offset_y=0"
+                    };
+                    File.WriteAllLines(cfgPath, lines);
+                    _barOffsetY = 0f;
+                    Debug.Log("[BossHealthHUD] 기본 BossHealthHUD.cfg 생성");
+                    return;
+                }
+
+                string[] cfgLines = File.ReadAllLines(cfgPath);
+                foreach (string raw in cfgLines)
+                {
+                    if (string.IsNullOrWhiteSpace(raw))
+                        continue;
+
+                    string line = raw.Trim();
+                    if (line.StartsWith("#"))
+                        continue;
+
+                    int eq = line.IndexOf('=');
+                    if (eq <= 0)
+                        continue;
+
+                    string key = line.Substring(0, eq).Trim().ToLowerInvariant();
+                    string value = line.Substring(eq + 1).Trim();
+
+                    float f;
+                    if (key == "bar_offset_y" && float.TryParse(value, out f))
+                    {
+                        _barOffsetY = f;
+                    }
+                }
+
+                Debug.Log("[BossHealthHUD] CFG 로드 완료 - bar_offset_y=" + _barOffsetY);
+            }
+            catch (Exception ex)
+            {
+                Debug.Log("[BossHealthHUD] LoadConfig 예외: " + ex);
+            }
         }
 
         private void Update()
@@ -205,39 +256,18 @@ namespace bosshealthhud
                 TryFindPlayer();
             }
 
-            // ── 씬 변경 감지: 맵 이동 시마다 배너 다시 보여줄 수 있게 플래그 리셋 ──
-            var activeScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
-            string activeName = activeScene.name;
-            if (activeName != _lastSceneName)
-            {
-                _lastSceneName = activeName;
-                _hasEnterAreaBannerShown = false;
-                Debug.Log("[BossHealthHUD] Scene changed -> " + activeName);
-            }
-
-            // 맵 진입 배너: 씬마다 한 번씩만 띄움
-            if (!_hasEnterAreaBannerShown && _player != null)
-            {
-                _hasEnterAreaBannerShown = true;
-                _enterAreaTitle = GetCurrentAreaTitle();
-                _enterAreaShowEndTime = Time.time + 4f; // 4초 동안 표시
-                Debug.Log("[BossHealthHUD] Enter area banner: " + _enterAreaTitle);
-            }
-
-            // 1) 지금 _bossList에 있는 애들 HP 변화를 매 프레임 체크
-            //    → 여기서 HP가 >0 → <=0 으로 바뀌면 TriggerDuckHunted 호출
-            //    → HP가 줄면 _revealedBosses 에 등록
+            // 1) 보스 사망 체크 (매 프레임)
             UpdateBossDeathState();
 
-            // ⏱ 해상도 상관없이 일정 시간마다만 보스 스캔 (CPU 부하 감소)
+            // 2) 일정 시간마다만 보스 스캔 (해상도 상관없이 부하 줄이기)
             _scanTimer -= Time.deltaTime;
             if (_scanTimer <= 0f)
             {
-                _scanTimer = _scanInterval;   // 예: 0.8초마다 한 번
+                _scanTimer = _scanInterval;
                 ScanBosses();
             }
 
-            // 3) DUCK HUNTED 페이드 타이머
+            // 3) DUCK HUNTED 타이머
             if (_showDuckHunted)
             {
                 _duckHuntedTimer -= Time.deltaTime;
@@ -276,98 +306,6 @@ namespace bosshealthhud
             {
                 Debug.Log("[BossHealthHUD] Player 찾기 예외: " + ex);
             }
-        }
-
-        // 현재 씬 이름을 KR/JP/EN으로 변환
-        private string GetCurrentAreaTitle()
-        {
-            var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
-            string sceneName = scene.name;
-            if (string.IsNullOrEmpty(sceneName))
-                return "레이드 시작";
-
-            string lower = sceneName.ToLowerInvariant();
-
-            bool isJap = (Application.systemLanguage == SystemLanguage.Japanese);
-            bool isEng = (Application.systemLanguage == SystemLanguage.English);
-
-            // 기지(Base)
-            if (lower == "base" || lower.Contains("base"))
-            {
-                if (isJap) return "バンカー";   // 기억해달라 한 매핑
-                if (isEng) return "Bunker";
-                return "벙커";
-            }
-
-            // 제로존 : Level_GroundZero_1 / Level_GroundZero_Main
-            if (lower.StartsWith("level_groundzero"))
-            {
-                if (isJap) return "エリアゼロ";
-                if (isEng) return "Ground Zero";
-                return "제로존";
-            }
-
-            // 창고 구역 : Level_HiddenWarehouse
-            if (lower.StartsWith("level_hiddenwarehouse"))
-            {
-                if (isJap) return "倉庫エリア";
-                if (isEng) return "Warehouse Area";
-                return "창고 구역";
-            }
-
-            // 농장마을 남부 : Level_Farm_01  (먼저 체크)
-            if (lower == "level_farm_01")
-            {
-                if (isJap) return "農場町・どこか";
-                if (isEng) return "Farm Town - somewhere";
-                return "농장마을 어딘가";
-            }
-
-            // 농장마을 : Level_Farm_Main
-            if (lower == "level_farm_main")
-            {
-                if (isJap) return "農場町";
-                if (isEng) return "Farm Town";
-                return "농장마을";
-            }
-
-            // J-Lab 연구소 입구 : Level_Farm_JLab_Facility
-            if (lower == "level_farm_jlab_facility")
-            {
-                if (isJap) return "J-Lab研究所・入口";
-                if (isEng) return "J-Lab Entrance";
-                return "J-Lab 연구소 입구";
-            }
-
-            // J-Lab 연구소 : Level_JLab_1
-            if (lower == "level_jlab_1" || lower.StartsWith("level_jlab"))
-            {
-                if (isJap) return "J-Lab研究所";
-                if (isEng) return "J-Lab";
-                return "J-Lab 연구소";
-            }
-
-            // 폭풍 구역 : Level_StormZone_1
-            if (lower == "level_stormzone_1" || lower.StartsWith("level_stormzone"))
-            {
-                if (isJap) return "嵐エリア";
-                if (isEng) return "Storm Zone";
-                return "폭풍 구역";
-            }
-
-            // 못 매칭하면 씬 이름 그대로
-            return sceneName;
-        }
-
-        // "지금 진입 중" 문구 (다국어)
-        private string GetNowEnteringText()
-        {
-            bool isJap = (Application.systemLanguage == SystemLanguage.Japanese);
-            bool isEng = (Application.systemLanguage == SystemLanguage.English);
-
-            if (isJap) return "現在進行中";
-            if (isEng) return "Now Entering";
-            return "지금 진입 중";
         }
 
         private void ScanBosses()
@@ -410,6 +348,7 @@ namespace bosshealthhud
                         continue;
                     }
 
+                    float maxHp = h.MaxHealth;
                     float curHp = h.CurrentHealth;
 
                     // 죽은 보스는 제외
@@ -418,7 +357,22 @@ namespace bosshealthhud
                         continue;
                     }
 
-                    // HP 크기는 이제 신경 안 씀 (이름만 맞으면 보스)
+                    // 꼬마덕(128) 이상만 보스로 취급 (보정값 120)
+                    if (maxHp < _bossMinMaxHp)
+                    {
+                        continue;
+                    }
+
+                    // 플레이어와 거리 제한
+                    if (_player != null && _player)
+                    {
+                        float dist = Vector3.Distance(_player.transform.position, ch.transform.position);
+                        if (dist > _maxBossDisplayDistance)
+                        {
+                            continue;
+                        }
+                    }
+
                     candidates.Add(ch);
                 }
 
@@ -456,7 +410,6 @@ namespace bosshealthhud
         private const int MaxBossBars = 3;
 
         // 보스 HP 변화 감지해서 죽었을 때 DUCK HUNTED + 사운드 트리거
-        // + HP가 줄면 "공개된 보스"로 표시
         private void UpdateBossDeathState()
         {
             if (_bossList == null || _bossList.Count == 0)
@@ -491,12 +444,6 @@ namespace bosshealthhud
                         continue;
                     }
 
-                    // HP가 줄어들었다 = 누군가에게 맞았다 → 이때부터 HP바 공개
-                    if (curHp < prevHp)
-                    {
-                        _revealedBosses.Add(boss);
-                    }
-
                     // 이전에는 살아 있었는데(>0), 지금 0 이하 → 방금 죽은 것
                     if (prevHp > 0f && curHp <= 0f)
                     {
@@ -515,7 +462,6 @@ namespace bosshealthhud
                     CharacterMainControl dead = _cleanupList[i];
                     _lastHpMap.Remove(dead);
                     _bossList.Remove(dead);
-                    _revealedBosses.Remove(dead);
                 }
             }
             catch (Exception ex)
@@ -574,58 +520,6 @@ namespace bosshealthhud
 
             Color originalColor = GUI.color;
 
-            // ====== 맵 진입 배너 ======
-            if (!string.IsNullOrEmpty(_enterAreaTitle) && Time.time < _enterAreaShowEndTime)
-            {
-                float bannerHeight = 60f;
-                float bannerWidth  = Screen.width * 0.7f;
-
-                // 스샷 기준 흰 줄 위치 근처로: 화면 높이의 약 22% 지점
-                float x = (Screen.width - bannerWidth) * 0.5f;
-                float y = Screen.height * 0.22f;
-
-                if (_areaBannerMainStyle == null)
-                {
-                    _areaBannerMainStyle = new GUIStyle(GUI.skin.label);
-                    _areaBannerMainStyle.alignment = TextAnchor.MiddleCenter;
-                    _areaBannerMainStyle.fontSize = 24;   // 큰 글씨 (지역 이름)
-                    _areaBannerMainStyle.fontStyle = FontStyle.Bold;
-                    _areaBannerMainStyle.normal.textColor = Color.white;
-                }
-
-                if (_areaBannerSubStyle == null)
-                {
-                    _areaBannerSubStyle = new GUIStyle(GUI.skin.label);
-                    _areaBannerSubStyle.alignment = TextAnchor.MiddleCenter;
-                    _areaBannerSubStyle.fontSize = 16;    // 작은 글씨 ("지금 진입 중")
-                    _areaBannerSubStyle.normal.textColor = Color.white;
-                }
-
-                // 배경 (검은 띠)
-                Color prevColor = GUI.color;
-                GUI.color = new Color(0f, 0f, 0f, 0.7f);
-                GUI.Box(new Rect(x, y, bannerWidth, bannerHeight), GUIContent.none);
-                GUI.color = prevColor;
-
-                // 위쪽 작은 글씨: "지금 진입 중" (다국어)
-                Rect subRect = new Rect(
-                    x,
-                    y + 10f,          // 검은 띠 안에서 조금 아래
-                    bannerWidth,
-                    20f
-                );
-                GUI.Label(subRect, GetNowEnteringText(), _areaBannerSubStyle);
-
-                // 가운데 굵은 글씨: 지역 이름
-                Rect mainRect = new Rect(
-                    x,
-                    y + 28f,          // 그 밑에 지역 이름
-                    bannerWidth,
-                    bannerHeight - 28f
-                );
-                GUI.Label(mainRect, _enterAreaTitle, _areaBannerMainStyle);
-            }
-
             // ====== 보스 HP 바들 그리기 ======
             if (_player != null && _player && _bossList != null && _bossList.Count > 0)
             {
@@ -645,16 +539,17 @@ namespace bosshealthhud
                     _hpTextStyle.normal.textColor = Color.white;
                 }
 
-                // 🔹 HP바 크기 (조금 작게)
-                float barWidth  = Screen.width * 0.60f;  // 살짝 줄인 가로폭
-                float barHeight = 24f;                   // 줄인 두께
+                float barWidth  = Screen.width * 0.75f;
+                float barHeight = 32f;   // 바 두께
 
-                float bottomMargin = 230f;               // 전체 세로 위치는 기존 유지
+                // 기본 230f 에서 CFG 값으로 위/아래 이동
+                float bottomMargin = 230f + _barOffsetY;
+
                 float baseX = (Screen.width - barWidth) * 0.5f;
                 float baseY = Screen.height - bottomMargin - barHeight;
 
                 // 바들 간 적당한 간격
-                float verticalSpacing = barHeight + 24f;
+                float verticalSpacing = barHeight + 30f;
 
                 if (_hpTex == null)
                 {
@@ -673,12 +568,6 @@ namespace bosshealthhud
                         continue;
                     }
 
-                    // 아직 한 번도 맞지 않은 보스는 HP바 안 보여줌
-                    if (!_revealedBosses.Contains(boss))
-                    {
-                        continue;
-                    }
-
                     Health h = boss.Health;
                     if (h == null)
                     {
@@ -689,6 +578,19 @@ namespace bosshealthhud
                     float curHp = h.CurrentHealth;
 
                     if (maxHp <= 0f || curHp <= 0f)
+                    {
+                        continue;
+                    }
+
+                    // 꼬마덕(128) 이상만 보스표시 (보정값 120)
+                    if (maxHp < _bossMinMaxHp)
+                    {
+                        continue;
+                    }
+
+                    // 거리 체크
+                    float dist = Vector3.Distance(_player.transform.position, boss.transform.position);
+                    if (dist > _maxBossDisplayDistance)
                     {
                         continue;
                     }
@@ -714,20 +616,20 @@ namespace bosshealthhud
 
                     string bossName = SafeGetName(boss);
 
-                    // 🔹 이름은 바 위쪽, 높이 넉넉하게(글씨 안 잘리게)
+                    // 이름은 바 바로 위 (위아래 여유 넉넉)
                     Rect nameRect = new Rect(
                         x,
-                        y - 26f,   // 바 위로 살짝 올림
+                        y - 29f,
                         barWidth,
-                        28f
+                        30f
                     );
 
-                    // 🔹 HP 텍스트는 막대 안 + 살짝 크게(위아래 여유)
+                    // HP 텍스트는 막대 안 중앙 (위쪽 안 잘리게 여유)
                     Rect hpRect = new Rect(
                         x + 2f,
-                        y - 2f,              // 위로 2픽셀
+                        y + 1f,
                         barWidth - 4f,
-                        barHeight + 4f       // 위아래 여유
+                        barHeight - 2f
                     );
 
                     GUI.Label(nameRect, bossName, _nameStyle);
@@ -857,4 +759,3 @@ namespace bosshealthhud
         }
     }
 }
-
