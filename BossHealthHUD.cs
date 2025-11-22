@@ -32,9 +32,13 @@ namespace bosshealthhud
     public class BossHealthHUDManager : MonoBehaviour
     {
         // ───── 기본 ─────
+       
         private Camera _mainCamera;
         private CharacterMainControl _player;
 
+        // 🔽 FindObjectsOfType 호출 빈도 줄이기용 타이머
+        private float _scanInterval = 0.8f;   // 몇 초마다 한 번 보스 스캔할지 (4K면 0.8~1.0 추천)
+        private float _scanTimer = 0.2f;
         // 여러 보스를 동시에 표시하기 위한 리스트
         private readonly List<CharacterMainControl> _bossList =
             new List<CharacterMainControl>();
@@ -171,6 +175,7 @@ namespace bosshealthhud
             TryFindMainCamera();
             TryFindPlayer();
 
+            _scanTimer = 0.2f;   // 게임 시작 직후 한 번 빨리 스캔
             // 첫 씬 이름 기록
             var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
             _lastSceneName = scene.name;
@@ -224,9 +229,11 @@ namespace bosshealthhud
             //    → HP가 줄면 _revealedBosses 에 등록
             UpdateBossDeathState();
 
-            // 2) 가끔씩(15프레임마다) 보스 목록을 갱신
-            if (Time.frameCount % 15 == 0)
+            // ⏱ 해상도 상관없이 일정 시간마다만 보스 스캔 (CPU 부하 감소)
+            _scanTimer -= Time.deltaTime;
+            if (_scanTimer <= 0f)
             {
+                _scanTimer = _scanInterval;   // 예: 0.8초마다 한 번
                 ScanBosses();
             }
 
