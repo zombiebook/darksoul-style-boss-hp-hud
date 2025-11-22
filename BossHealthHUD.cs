@@ -539,7 +539,7 @@ namespace bosshealthhud
                     _hpTextStyle.normal.textColor = Color.white;
                 }
 
-                float barWidth  = Screen.width * 0.75f;
+                float barWidth = Screen.width * 0.75f;
                 float barHeight = 32f;   // 바 두께
 
                 // 기본 230f 에서 CFG 값으로 위/아래 이동
@@ -675,7 +675,7 @@ namespace bosshealthhud
                 GUI.DrawTexture(bgRect, Texture2D.whiteTexture);
 
                 float mainSize = _duckHuntedStyle.fontSize;
-                float subSize  = _duckHuntedSubStyle.fontSize;
+                float subSize = _duckHuntedSubStyle.fontSize;
 
                 Rect mainRect = new Rect(
                     0f,
