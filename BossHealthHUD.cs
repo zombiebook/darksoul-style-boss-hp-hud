@@ -72,6 +72,14 @@ namespace bosshealthhud
         private GUIStyle _duckHuntedStyle;
         private GUIStyle _duckHuntedSubStyle;
 
+        // ───── 맵 진입 배너(위에 맵 이름 + "지금 진입 중") ─────
+        private string _currentAreaSceneName;
+        private string _currentAreaDisplayName;
+        private float _enterAreaBannerTimer;
+        private const float EnterAreaBannerDuration = 3.0f;
+        private GUIStyle _enterAreaBannerMainStyle;
+        private GUIStyle _enterAreaBannerSubStyle;
+
         // 보스 HP 변화 추적(죽었는지 체크)
         private readonly Dictionary<CharacterMainControl, float> _lastHpMap =
             new Dictionary<CharacterMainControl, float>();
@@ -259,7 +267,10 @@ namespace bosshealthhud
             // 1) 보스 사망 체크 (매 프레임)
             UpdateBossDeathState();
 
-            // 2) 일정 시간마다만 보스 스캔 (해상도 상관없이 부하 줄이기)
+            // 2) 맵 진입 배너 갱신 (씬 이름 변경 감지)
+            UpdateAreaBanner();
+
+            // 3) 일정 시간마다만 보스 스캔 (해상도 상관없이 부하 줄이기)
             _scanTimer -= Time.deltaTime;
             if (_scanTimer <= 0f)
             {
@@ -267,7 +278,7 @@ namespace bosshealthhud
                 ScanBosses();
             }
 
-            // 3) DUCK HUNTED 타이머
+            // 4) DUCK HUNTED 타이머
             if (_showDuckHunted)
             {
                 _duckHuntedTimer -= Time.deltaTime;
@@ -511,6 +522,116 @@ namespace bosshealthhud
             }
         }
 
+        // ───── 맵 진입 배너(씬 이름 변경 감지 + 로컬라이즈) ─────
+        private void UpdateAreaBanner()
+        {
+            try
+            {
+                string sceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+                if (!string.IsNullOrEmpty(sceneName))
+                {
+                    if (_currentAreaSceneName != sceneName)
+                    {
+                        _currentAreaSceneName = sceneName;
+                        _currentAreaDisplayName = GetLocalizedAreaName(sceneName);
+
+                        if (!string.IsNullOrEmpty(_currentAreaDisplayName))
+                        {
+                            _enterAreaBannerTimer = EnterAreaBannerDuration;
+                            Debug.Log("[BossHealthHUD] Area entered: " + sceneName + " -> " + _currentAreaDisplayName);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.Log("[BossHealthHUD] UpdateAreaBanner 예외: " + ex);
+            }
+
+            if (_enterAreaBannerTimer > 0f)
+            {
+                _enterAreaBannerTimer -= Time.deltaTime;
+                if (_enterAreaBannerTimer < 0f)
+                    _enterAreaBannerTimer = 0f;
+            }
+        }
+
+        private string GetLocalizedAreaName(string sceneName)
+        {
+            if (string.IsNullOrEmpty(sceneName))
+                return null;
+
+            string lower = sceneName.ToLowerInvariant();
+            bool isJap = Application.systemLanguage == SystemLanguage.Japanese;
+            bool isEng = Application.systemLanguage == SystemLanguage.English;
+
+            // 기지(Base)
+            if (lower == "base" || lower.Contains("base"))
+            {
+                if (isJap) return "バンカー";
+                if (isEng) return "Bunker";
+                return "벙커";
+            }
+
+            // 제로존 : Level_GroundZero_
+            if (lower.Contains("groundzero"))
+            {
+                if (isJap) return "エリアゼロ";
+                if (isEng) return "Ground Zero";
+                return "제로존";
+            }
+
+            // 창고 구역 : HiddenWarehouse
+            if (lower.Contains("hiddenwarehouse"))
+            {
+                if (isJap) return "倉庫エリア";
+                if (isEng) return "Warehouse Area";
+                return "창고 구역";
+            }
+
+            // 농장마을 어딘가 : Farm_01
+            if (lower == "farm_01" || lower.Contains("farm_01"))
+            {
+                if (isJap) return "農場町・どこか";
+                if (isEng) return "Farm Town - somewhere";
+                return "농장마을 어딘가";
+            }
+
+            // 농장마을 : Farm_Main
+            if (lower == "farm_main" || lower.Contains("farm_main"))
+            {
+                if (isJap) return "農場町";
+                if (isEng) return "Farm Town";
+                return "농장마을";
+            }
+
+            // J-Lab 연구소 입구 : Farm_JLab_Facility
+            if (lower.Contains("farm_jlab_facility"))
+            {
+                if (isJap) return "J-Lab研究所・入口";
+                if (isEng) return "J-Lab Entrance";
+                return "J-Lab 연구소 입구";
+            }
+
+            // J-Lab 연구소 : JLab_1, level_jlab*
+            if (lower.Contains("jlab"))
+            {
+                if (isJap) return "J-Lab研究所";
+                if (isEng) return "J-Lab";
+                return "J-Lab 연구소";
+            }
+
+            // 폭풍 구역 : StormZone
+            if (lower.Contains("stormzone"))
+            {
+                if (isJap) return "嵐エリア";
+                if (isEng) return "Storm Zone";
+                return "폭풍 구역";
+            }
+
+            return null;
+        }
+
         private void OnGUI()
         {
             if (!_uiEnabled)
@@ -595,6 +716,27 @@ namespace bosshealthhud
                         continue;
                     }
 
+                    // 화면 안에 있는 보스만 HP바 표시
+                    if (_mainCamera != null)
+                    {
+                        try
+                        {
+                            Vector3 vp = _mainCamera.WorldToViewportPoint(boss.transform.position);
+                            bool onScreen =
+                                vp.z > 0f &&
+                                vp.x >= 0f && vp.x <= 1f &&
+                                vp.y >= 0f && vp.y <= 1f;
+
+                            if (!onScreen)
+                            {
+                                continue;
+                            }
+                        }
+                        catch
+                        {
+                        }
+                    }
+
                     float ratio = Mathf.Clamp01(curHp / maxHp);
 
                     float x = baseX;
@@ -641,6 +783,78 @@ namespace bosshealthhud
 
                     drawnCount++;
                 }
+            }
+
+            // ====== 맵 진입 배너 (위에 맵 이름 + "지금 진입 중") ======
+            if (_enterAreaBannerTimer > 0f && !string.IsNullOrEmpty(_currentAreaDisplayName))
+            {
+                if (_enterAreaBannerMainStyle == null)
+                {
+                    _enterAreaBannerMainStyle = new GUIStyle(GUI.skin.label);
+                    _enterAreaBannerMainStyle.alignment = TextAnchor.MiddleCenter;
+                    _enterAreaBannerMainStyle.fontSize = 30;
+                    _enterAreaBannerMainStyle.fontStyle = FontStyle.Bold;
+                    _enterAreaBannerMainStyle.normal.textColor = Color.white;
+                }
+
+                if (_enterAreaBannerSubStyle == null)
+                {
+                    _enterAreaBannerSubStyle = new GUIStyle(GUI.skin.label);
+                    _enterAreaBannerSubStyle.alignment = TextAnchor.MiddleCenter;
+                    _enterAreaBannerSubStyle.fontSize = 20;
+                    _enterAreaBannerSubStyle.normal.textColor = Color.white;
+                }
+
+                bool isJap = Application.systemLanguage == SystemLanguage.Japanese;
+                bool isEng = Application.systemLanguage == SystemLanguage.English;
+
+                float t = Mathf.Clamp01(_enterAreaBannerTimer / EnterAreaBannerDuration);
+
+                float bannerHeight = 70f;
+                Rect bgRect = new Rect(
+                    0f,
+                    40f,
+                    Screen.width,
+                    bannerHeight
+                );
+
+                GUI.color = new Color(0f, 0f, 0f, 0.5f * t);
+                GUI.DrawTexture(bgRect, Texture2D.whiteTexture);
+
+                Rect mainRect = new Rect(
+                    0f,
+                    bgRect.y + 6f,
+                    Screen.width,
+                    34f
+                );
+
+                GUI.color = new Color(1f, 0.9f, 0.6f, t);
+                GUI.Label(mainRect, _currentAreaDisplayName, _enterAreaBannerMainStyle);
+
+                Rect subRect = new Rect(
+                    0f,
+                    mainRect.y + 30f,
+                    Screen.width,
+                    24f
+                );
+
+                string subText;
+                if (isJap)
+                {
+                    subText = "エリア進入中";
+                }
+                else if (isEng)
+                {
+                    subText = "Entering area";
+                }
+                else
+                {
+                    // ★ 예전 그대로 유지해야 했던 문구
+                    subText = "지금 진입 중";
+                }
+
+                GUI.color = new Color(1f, 1f, 1f, t);
+                GUI.Label(subRect, subText, _enterAreaBannerSubStyle);
             }
 
             // ====== DUCK HUNTED 오버레이 ======
