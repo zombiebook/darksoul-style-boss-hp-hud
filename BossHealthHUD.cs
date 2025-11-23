@@ -492,35 +492,72 @@ namespace bosshealthhud
             TryPlayBossDefeatedSound();
         }
 
+        // 🔊 보스 처치 사운드: 코루틴으로 2개 순차 재생
+        // 🔊 보스 처치 사운드: 코루틴으로 2개 순차 재생
         private void TryPlayBossDefeatedSound()
         {
             try
             {
-                string dllPath = Assembly.GetExecutingAssembly().Location;
-                string folder = Path.GetDirectoryName(dllPath);
-                if (string.IsNullOrEmpty(folder))
-                {
-                    Debug.Log("[BossHealthHUD] DLL 폴더 경로를 찾지 못했습니다.");
-                    return;
-                }
-
-                string audioDir = Path.Combine(folder, "Audio");
-                string filePath = Path.Combine(audioDir, "BossDefeated.mp3");
-
-                if (!System.IO.File.Exists(filePath))
-                {
-                    Debug.Log("[BossHealthHUD] BossDefeated.mp3 not found: " + filePath);
-                    return;
-                }
-
-                AudioManager.PostCustomSFX(filePath, null, false);
-                Debug.Log("[BossHealthHUD] BossDefeated sound played: " + filePath);
+                StartCoroutine(PlayBossDefeatedSequence());
             }
             catch (Exception ex)
             {
                 Debug.LogError("[BossHealthHUD] TryPlayBossDefeatedSound ERROR: " + ex);
             }
         }
+
+
+        private IEnumerator PlayBossDefeatedSequence()
+        {
+            string dllPath = Assembly.GetExecutingAssembly().Location;
+            string folder = Path.GetDirectoryName(dllPath);
+            if (string.IsNullOrEmpty(folder))
+            {
+                Debug.Log("[BossHealthHUD] DLL 폴더 경로를 찾지 못했습니다.");
+                yield break;
+            }
+
+            string audioDir = Path.Combine(folder, "Audio");
+
+            // ✅ 1번 소리: 예전에 잘 되던 기본 파일
+            string firstPath = Path.Combine(audioDir, "BossDefeated.wav");
+            // ✅ 2번 소리: 추가 재생용
+            string secondPath = Path.Combine(audioDir, "BossDefeated_2.mp3");
+
+            bool hasFirst = File.Exists(firstPath);
+            bool hasSecond = File.Exists(secondPath);
+
+            // 둘 다 없으면 아무것도 못 함
+            if (!hasFirst && !hasSecond)
+            {
+                Debug.Log("[BossHealthHUD] BossDefeated sound files not found");
+                yield break;
+            }
+
+            // 🔸 죽는 이펙트 먼저 들리게 약간 기다렸다가 1번 소리 재생
+            const float firstDelay = 0.35f;   // 너무 겹치면 0.5f 정도까지 올려도 됨
+
+            if (hasFirst)
+            {
+                // 죽는 이펙트가 먼저 나가도록 살짝 딜레이
+                yield return new WaitForSeconds(firstDelay);
+
+                AudioManager.PostCustomSFX(firstPath, null, false);
+                Debug.Log("[BossHealthHUD] BossDefeated (first) sound played: " + firstPath);
+
+                // 1번 끝나고 2번까지 대기 (원래 2.5f 쓰던 자리)
+                yield return new WaitForSeconds(1.0f);
+            }
+
+            // 2번 소리 (있으면 이어서)
+            if (hasSecond)
+            {
+                AudioManager.PostCustomSFX(secondPath, null, false);
+                Debug.Log("[BossHealthHUD] BossDefeated_2 sound played: " + secondPath);
+            }
+        }
+
+
 
         // ───── 맵 진입 배너(씬 이름 변경 감지 + 로컬라이즈) ─────
         private void UpdateAreaBanner()
@@ -849,7 +886,7 @@ namespace bosshealthhud
                 }
                 else
                 {
-                    // ★ 예전 그대로 유지해야 했던 문구
+                    // ★ 사용자가 유지해 달라고 했던 문구
                     subText = "지금 진입 중";
                 }
 
