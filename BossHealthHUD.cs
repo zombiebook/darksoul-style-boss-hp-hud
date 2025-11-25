@@ -114,7 +114,7 @@ namespace bosshealthhud
             "교도관",
             "폭풍?",
             "일진",
-            "급속 단장",
+            "급속단 단장",
             "방랑자",
             "라이트맨",
             "Pato Chapo",
@@ -1010,3 +1010,4 @@ namespace bosshealthhud
         }
     }
 }
+
