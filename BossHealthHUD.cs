@@ -6,7 +6,7 @@ using System.Reflection;
 using System.IO;
 using ItemStatsSystem;
 using UnityEngine;
-using Duckov;    // AudioManager, CharacterMainControl, Health
+using Duckov;    // CharacterMainControl, Health, AudioManager 등
 
 namespace bosshealthhud
 {
@@ -48,7 +48,7 @@ namespace bosshealthhud
         // 🔧 HP 바 위치 조절 (Y 오프셋, 픽셀 단위) – 양수: 위로, 음수: 아래로
         private float _barOffsetY = 0f;
 
-        // HUD On/Off
+        // HUD On/Off (기본 ON)
         private bool _uiEnabled = true;       // F8 토글
 
         // 꼬마덕 HP가 128이라, 그보다 살짝 여유 있게 120 이상을 보스로 취급
@@ -86,6 +86,10 @@ namespace bosshealthhud
         private readonly List<CharacterMainControl> _cleanupList =
             new List<CharacterMainControl>();
 
+        // 보스가 '플레이어와 전투 중인지' 여부 (플레이어가 공격한 것으로 추정되면 true)
+        private readonly Dictionary<CharacterMainControl, bool> _bossEngaged =
+            new Dictionary<CharacterMainControl, bool>();
+
         // 보스 HUD를 띄울 이름들 (화이트리스트: 한·영·일)
         private static readonly string[] _bossNameExact =
         {
@@ -114,7 +118,7 @@ namespace bosshealthhud
             "교도관",
             "폭풍?",
             "일진",
-            "급속단 단장",
+            "급속 단장",
             "방랑자",
             "라이트맨",
             "Pato Chapo",
@@ -264,7 +268,7 @@ namespace bosshealthhud
                 TryFindPlayer();
             }
 
-            // 1) 보스 사망 체크 (매 프레임)
+            // 1) 보스 사망 및 HP 변화 체크 (매 프레임)
             UpdateBossDeathState();
 
             // 2) 맵 진입 배너 갱신 (씬 이름 변경 감지)
@@ -420,7 +424,9 @@ namespace bosshealthhud
         // 동시에 표시할 수 있는 보스 바 최대 개수
         private const int MaxBossBars = 3;
 
-        // 보스 HP 변화 감지해서 죽었을 때 DUCK HUNTED + 사운드 트리거
+        // 보스 HP 변화 감지해서
+        //  - HP 감소 + 플레이어 근처/시야 중앙이면 "교전 시작" 표시
+        //  - HP 0 이하로 떨어지면 DUCK HUNTED + 사운드 트리거
         private void UpdateBossDeathState()
         {
             if (_bossList == null || _bossList.Count == 0)
@@ -455,6 +461,16 @@ namespace bosshealthhud
                         continue;
                     }
 
+                    // 🔸 HP가 줄어들었으면, 플레이어가 근처 + 화면 중앙 쪽을 보고 있을 때
+                    //     → "플레이어가 교전 시작한 것 같다"라고 표시
+                    if (curHp < prevHp - 0.01f)   // 약간 여유(0.01) 줘서 미세한 오차 무시
+                    {
+                        if (IsPlayerLikelyAttacker(boss))
+                        {
+                            _bossEngaged[boss] = true;
+                        }
+                    }
+
                     // 이전에는 살아 있었는데(>0), 지금 0 이하 → 방금 죽은 것
                     if (prevHp > 0f && curHp <= 0f)
                     {
@@ -473,12 +489,48 @@ namespace bosshealthhud
                     CharacterMainControl dead = _cleanupList[i];
                     _lastHpMap.Remove(dead);
                     _bossList.Remove(dead);
+                    _bossEngaged.Remove(dead);
                 }
             }
             catch (Exception ex)
             {
                 Debug.Log("[BossHealthHUD] UpdateBossDeathState 예외: " + ex);
             }
+        }
+
+        /// <summary>
+        /// 이 보스가 피해를 입었을 때, 그걸 플레이어가 때린 걸로 '추정'할 수 있는지.
+        /// (거리 + 화면 중앙 근처에 있는지로만 판정)
+        /// </summary>
+        private bool IsPlayerLikelyAttacker(CharacterMainControl boss)
+        {
+            if (_player == null || !_player || boss == null || !boss)
+                return false;
+
+            // 거리 체크 (너무 멀면 다른 적이 때린 걸로 보는 쪽에 가깝다)
+            float dist = Vector3.Distance(_player.transform.position, boss.transform.position);
+            if (dist > 25f)    // 필요하면 20f, 30f 등으로 조정 가능
+                return false;
+
+            if (_mainCamera == null)
+                return true;   // 카메라 없으면 그냥 true (레어 케이스)
+
+            try
+            {
+                Vector3 vp = _mainCamera.WorldToViewportPoint(boss.transform.position);
+                // 화면 앞쪽에 있고
+                if (vp.z <= 0f) return false;
+
+                // 화면 중앙 근처 (좌우/상하 0.15~0.85 사이 → 거의 화면 가운데 쪽만)
+                if (vp.x < 0.15f || vp.x > 0.85f) return false;
+                if (vp.y < 0.15f || vp.y > 0.85f) return false;
+            }
+            catch
+            {
+                return false;
+            }
+
+            return true;
         }
 
         private void TriggerDuckHunted(string bossName)
@@ -493,7 +545,6 @@ namespace bosshealthhud
         }
 
         // 🔊 보스 처치 사운드: 코루틴으로 2개 순차 재생
-        // 🔊 보스 처치 사운드: 코루틴으로 2개 순차 재생
         private void TryPlayBossDefeatedSound()
         {
             try
@@ -505,7 +556,6 @@ namespace bosshealthhud
                 Debug.LogError("[BossHealthHUD] TryPlayBossDefeatedSound ERROR: " + ex);
             }
         }
-
 
         private IEnumerator PlayBossDefeatedSequence()
         {
@@ -519,9 +569,9 @@ namespace bosshealthhud
 
             string audioDir = Path.Combine(folder, "Audio");
 
-            // ✅ 1번 소리: 예전에 잘 되던 기본 파일
-            string firstPath = Path.Combine(audioDir, "BossDefeated.wav");
-            // ✅ 2번 소리: 추가 재생용
+            // 1번 소리: 예전에 잘 되던 기본 파일
+            string firstPath = Path.Combine(audioDir, "BossDefeated.mp3");
+            // 2번 소리: 추가 재생용
             string secondPath = Path.Combine(audioDir, "BossDefeated_2.mp3");
 
             bool hasFirst = File.Exists(firstPath);
@@ -535,7 +585,7 @@ namespace bosshealthhud
             }
 
             // 🔸 죽는 이펙트 먼저 들리게 약간 기다렸다가 1번 소리 재생
-            const float firstDelay = 0.35f;   // 너무 겹치면 0.5f 정도까지 올려도 됨
+            const float firstDelay = 0.35f;   // 너무 겹치면 0.5f, 0.7f 등으로 조정 가능
 
             if (hasFirst)
             {
@@ -545,8 +595,8 @@ namespace bosshealthhud
                 AudioManager.PostCustomSFX(firstPath, null, false);
                 Debug.Log("[BossHealthHUD] BossDefeated (first) sound played: " + firstPath);
 
-                // 1번 끝나고 2번까지 대기 (원래 2.5f 쓰던 자리)
-                yield return new WaitForSeconds(1.0f);
+                // 1번 끝나고 2번까지 대기 (대략 길이에 맞게 조절)
+                yield return new WaitForSeconds(2.5f);
             }
 
             // 2번 소리 (있으면 이어서)
@@ -556,8 +606,6 @@ namespace bosshealthhud
                 Debug.Log("[BossHealthHUD] BossDefeated_2 sound played: " + secondPath);
             }
         }
-
-
 
         // ───── 맵 진입 배너(씬 이름 변경 감지 + 로컬라이즈) ─────
         private void UpdateAreaBanner()
@@ -746,6 +794,14 @@ namespace bosshealthhud
                         continue;
                     }
 
+                    // 🧷 플레이어가 이 보스와 '교전 중'이라고 판단되기 전까지는 HP바 숨김
+                    bool engaged;
+                    if (!_bossEngaged.TryGetValue(boss, out engaged) || !engaged)
+                    {
+                        // 아직 플레이어가 때린 걸로 판단되지 않은 보스 → 표시 안 함
+                        continue;
+                    }
+
                     // 거리 체크
                     float dist = Vector3.Distance(_player.transform.position, boss.transform.position);
                     if (dist > _maxBossDisplayDistance)
@@ -886,7 +942,7 @@ namespace bosshealthhud
                 }
                 else
                 {
-                    // ★ 사용자가 유지해 달라고 했던 문구
+                    // 유지 문구
                     subText = "지금 진입 중";
                 }
 
@@ -1010,4 +1066,3 @@ namespace bosshealthhud
         }
     }
 }
-
